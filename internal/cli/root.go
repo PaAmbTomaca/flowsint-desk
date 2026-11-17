@@ -18,6 +18,12 @@ estado en tmpfs: al cerrar, nada queda en claro en el disco local. La persistenc
 son snapshots cifrados con restic en una carpeta de pCloud, protegidos solo por la
 frase de paso.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// HARDRULE: nunca como root. Como root se podría tocar el Docker
+		// rootful del sistema y los datos dejarían de estar bajo el usuario.
+		if os.Geteuid() == 0 {
+			fmt.Fprintln(os.Stderr, "error: flowsint-desk NUNCA se ejecuta como root (prohibido sudo): la CLI se niega a arrancar con euid=0")
+			os.Exit(1)
+		}
 		// endurecimiento obligatorio: umask restrictiva y sin cores
 		syscall.Umask(0o077)
 		_ = unix.Setrlimit(unix.RLIMIT_CORE, &unix.Rlimit{Cur: 0, Max: 0})

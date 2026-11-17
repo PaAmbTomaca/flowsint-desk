@@ -12,6 +12,11 @@ REGLAS DURAS (léelas antes que nada; cada una evita un desastre que ya ocurrió
 - PROHIBIDO sudo. PROHIBIDO tocar el Docker del sistema (rootful) y sus contenedores,
   imágenes, volúmenes o redes: hay contenedores de trabajo del usuario ahí.
   No ejecutes ningún `docker` sin DOCKER_HOST apuntando al socket rootless de este proyecto.
+- NUNCA ejecutar flowsint-desk como root (la CLI se niega con euid=0 → exit 1).
+  [Añadido 2026-11-17, orden del operador]
+- HARDRULE commits: granulares, un cambio lógico por commit, mensaje con QUÉ y POR QUÉ;
+  si hace falta, engrosar `docs/` (ADR) con el porqué. Prohibidos los commits masivos.
+  [Añadido 2026-11-17, orden del operador]
 - El código de referencia de Flowsint se descarga SIN git, como tarball, en dist/flowsint-ref
   (ver sección 3). Es solo para leer: NO lo modifiques.
 - NO uses pkill -f ni pgrep -f (se matan a sí mismos). Usa pkill -x o filtra por `comm`.

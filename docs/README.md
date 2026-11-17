@@ -41,6 +41,7 @@ docs/
 | 0004 | Exposición mínima: solo `127.0.0.1:5273`, Redis sin persistencia |
 | 0005 | Una sola llave: la frase de paso; secretos dentro del snapshot cifrado |
 | 0006 | Método de snapshot Neo4j (APOC cypher) + verificación por manifest |
+| 0007 | Nunca ejecutar la CLI como root (guarda euid=0 → exit 1) |
 
 ### Propuestas pendientes (`proposals/`)
 

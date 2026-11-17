@@ -12,6 +12,12 @@ con snapshots cifrados (restic) en pCloud. La especificación completa está en
 - **Prohibido sudo.** Prohibido tocar el Docker rootful del sistema: la única excepción es
   `docker ps` SIN `DOCKER_HOST` (foto de control). Todo lo demás usa
   `DOCKER_HOST=unix:///tmp/flowsint-desk-<boot_id>/docker.sock` (ver `internal/dock`).
+- **Prohibido ejecutar flowsint-desk como root** (la CLI se niega con euid=0). Prohibido `sudo flowsint-desk ...`.
+  [Añadido 2026-11-17, orden del operador]
+- **HARDRULE — commits granulares**: un commit por cambio lógico, siempre con mensaje que diga
+  QUÉ y POR QUÉ; si un cambio lo necesita, engrosar `docs/` (ADR en `docs/decisions/` o
+  `docs/proposals/`) con el porqué. Prohibidos los commits masivos de "varios cambios".
+  [Añadido 2026-11-17, orden del operador]
 - **Nunca secretos en argv ni impresos** (frase de paso, contraseñas, claves). A restic la
   frase le llega por `RESTIC_PASSWORD_FILE` (fichero 0600 en tmpfs). En pruebas, pasar la
   frase por **stdin** (pipe), nunca por argumento.
