@@ -18,7 +18,37 @@ Flowsint (OSINT de grafos) en tu PC de escritorio, **efímero y cifrado**:
 - Solo se publica `127.0.0.1:5273`. Ni la API, ni Neo4j, ni Postgres, ni Redis salen
   de loopback. Redis va sin persistencia (`--save "" --appendonly no`).
 
-## Requisitos
+## Por qué existe flowsint-desk
+
+Flowsint está pensado para un **servidor**: su `docker-compose.prod.yml` publica
+puertos en `0.0.0.0` y asume estado persistente en disco. En un PC de escritorio
+con datos OSINT sensibles eso no vale: no queremos exponer nada fuera de loopback
+ni dejar datos en claro en el disco local. `flowsint-desk` envuelve Flowsint con
+esas garantías **desde fuera, sin tocar su código**: todo el estado vive en
+tmpfs (RAM) mientras la sesión está abierta —incluidos los volúmenes de Postgres
+y Neo4j y los logs de los contenedores, porque el data-root del Docker rootless
+está en tmpfs—; Redis no persiste nada; y lo único que sobrevive en disco es el
+repositorio restic **cifrado** en pCloud, protegido solo por la frase de paso.
+Al cerrar la sesión (o al apagar el PC) la tmpfs se va con la RAM: no queda nada
+en claro en el disco local.
+
+## Créditos
+
+El mérito del motor OSINT es de **[Flowsint](https://github.com/reconurge/flowsint)**
+y su equipo: API, grafos en Neo4j, enrichers que lanzan contenedores, vault de
+claves cifrado... un curro enorme. Nuestra decisión de desplegarlo en local con
+Docker rootless y efímero se apoya en su arquitectura (p. ej. el socket de Docker
+que montan `api`/`celery` para los enrichers). Esta CLI solo añade la capa de
+escritorio efímera y cifrada por fuera, usando las imágenes oficiales tal cual.
+
+## Requisitos e instalación
+
+La vía rápida es **`flowsint-desk setup`** (equivalente a `doctor --fix`): instala
+automáticamente en `~/.local/bin` lo que no requiera sudo (restic verificado por
+sha256, rootlesskit, slirp4netns, fuse-overlayfs, `dockerd-rootless.sh`), crea la
+caché de imágenes y `config.toml`, y al final imprime **solo los pasos pendientes**
+que sí requieran sudo (normalmente una vez: `/etc/subuid` y `/etc/subgid`).
+La CLI nunca ejecuta sudo: los comandos pendientes se muestran para copiarlos.
 
 `flowsint-desk doctor` comprueba **todos** los requisitos y, si falta algo,
 imprime el paso exacto para arreglarlo (`→ arreglar: ...`). Con
@@ -55,6 +85,9 @@ chmod +x ~/.local/bin/dockerd-rootless.sh
 # subuid (esto sí necesita sudo una vez)
 echo "$(whoami):100000:65536" | sudo tee -a /etc/subuid | sudo tee -a /etc/subgid >/dev/null
 ```
+
+(Ese bloque es justo lo que hace `flowsint-desk setup` automáticamente salvo el
+paso de `sudo`, que siempre queda para ti.)
 
 ## Uso
 
@@ -98,6 +131,15 @@ snapshot automático.
 
 ## Seguridad
 
+- **Nunca como root**: la CLI se niega a arrancar con `euid=0` (prohibido
+  `sudo flowsint-desk ...`), así que desde aquí no se puede tocar el Docker
+  rootful del sistema.
+- **Todo el estado en RAM**: el data-root del Docker rootless está en tmpfs, así
+  que los volúmenes de Postgres/Neo4j y los logs de los contenedores solo viven
+  en RAM mientras la sesión está abierta; Redis va con `--save "" --appendonly no`.
+  Lo único persistente en disco es el repo restic **cifrado** en pCloud (más la
+  config sin secretos y la caché de imágenes públicas). Al apagar, la tmpfs
+  desaparece: los datos quedan blindados solo en los exports cifrados.
 - `umask 077`, `RLIMIT_CORE=0`, ningún secreto en argv ni en logs. La frase de paso
   viaja a restic por `RESTIC_PASSWORD_FILE` (fichero 0600 en tmpfs, borrado al final).
 - Antes de escribir nada se comprueba con `statfs` que el directorio de ejecución
