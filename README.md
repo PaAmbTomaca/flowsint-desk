@@ -110,6 +110,12 @@ flowsint-desk forget                          # retención (24/h, 30/d, 12/m) + 
 flowsint-desk passwd                          # cambiar la frase de paso
 ```
 
+> Nota (varios almacenes / pruebas): la frase se resuelve en este orden:
+> `runDir/passphrase` (tmpfs) → llavero → prompt. Si el llavero guarda la frase
+> de OTRO almacén, `up` falla con "frase incorrecta" aunque la pases por stdin;
+> en ese caso repuebla `/tmp/flowsint-desk-<boot_id>/passphrase` (0600) antes de
+> arrancar o usa el almacén del llavero.
+
 En `up` queda en primer plano: guarda automáticamente cada 10 min (configurable),
 renueva el latido del bloqueo cada minuto y, con Ctrl+C/SIGTERM o al apagar el equipo
 (`systemd-inhibit --what=shutdown --mode=delay`), hace un **snapshot final** antes de

@@ -112,6 +112,13 @@ flowsint-desk forget                          # retention (24/h, 30/d, 12/m) + p
 flowsint-desk passwd                          # change the passphrase
 ```
 
+> Note (several vaults / tests): the passphrase is resolved in this order:
+> `runDir/passphrase` (tmpfs) → keyring → prompt. If the keyring holds the
+> passphrase of ANOTHER vault, `up` fails with "wrong passphrase" even if you pipe
+> the right one on stdin; in that case repopulate
+> `/tmp/flowsint-desk-<boot_id>/passphrase` (0600) before starting, or use the
+> vault the keyring belongs to.
+
 `up` stays in the foreground: it saves automatically every 10 min (configurable),
 renews the lock heartbeat every minute and, on Ctrl+C/SIGTERM or at system
 shutdown (`systemd-inhibit --what=shutdown --mode=delay`), takes a **final
