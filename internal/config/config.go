@@ -1,0 +1,99 @@
+// Package config gestiona ~/.config/flowsint-desk/config.toml.
+// NUNCA almacena secretos: solo ruta del almacén, puerto, intervalos y retención.
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/BurntSushi/toml"
+)
+
+type Config struct {
+	Path            string `toml:"-"`
+	VaultPath       string `toml:"vault_path"`        // carpeta del almacén restic (pCloud)
+	Port            int    `toml:"port"`              // puerto local de la UI (127.0.0.1)
+	SaveIntervalMin int    `toml:"save_interval_min"` // snapshot automático
+	KeepHourly      int    `toml:"keep_hourly"`
+	KeepDaily       int    `toml:"keep_daily"`
+	KeepMonthly     int    `toml:"keep_monthly"`
+	LastForget      string `toml:"last_forget"` // RFC3339 de la última ejecución de forget
+}
+
+func Default() *Config {
+	home, _ := os.UserHomeDir()
+	return &Config{
+		VaultPath:       filepath.Join(home, "pCloudDrive", "flowsint-vault"),
+		Port:            5273,
+		SaveIntervalMin: 10,
+		KeepHourly:      24,
+		KeepDaily:       30,
+		KeepMonthly:     12,
+	}
+}
+
+func Dir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "flowsint-desk"), nil
+}
+
+func FilePath() (string, error) {
+	d, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "config.toml"), nil
+}
+
+// Load devuelve la config existente o los valores por defecto si no hay fichero.
+func Load() (*Config, error) {
+	p, err := FilePath()
+	if err != nil {
+		return nil, err
+	}
+	c := Default()
+	c.Path = p
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return c, nil
+	}
+	if _, err := toml.DecodeFile(p, c); err != nil {
+		return nil, err
+	}
+	c.Path = p
+	return c, nil
+}
+
+func (c *Config) Save() error {
+	d, err := Dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(c.Path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return toml.NewEncoder(f).Encode(c)
+}
+
+func (c *Config) ForgetDue() bool {
+	if c.LastForget == "" {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339, c.LastForget)
+	if err != nil {
+		return true
+	}
+	return time.Since(t) > 24*time.Hour
+}
+
+func (c *Config) MarkForgotten() {
+	c.LastForget = time.Now().UTC().Format(time.RFC3339)
+}

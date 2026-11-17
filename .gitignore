@@ -1,0 +1,4 @@
+# El binario compilado y el vault de pruebas se regeneran en local: no van al repo
+dist/
+# Referencia upstream de Flowsint (solo lectura, con su propio .git): no va al repo
+flowsint/
