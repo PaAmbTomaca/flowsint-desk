@@ -40,6 +40,6 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.AddCommand(doctorCmd, initCmd, upCmd, downCmd, statusCmd,
+	rootCmd.AddCommand(doctorCmd, setupCmd, initCmd, upCmd, downCmd, statusCmd,
 		backupCmd, snapshotsCmd, unlockCmd, forgetCmd, passwdCmd)
 }

@@ -49,30 +49,38 @@ lo instalable: descarga restic (verificando su sha256), los binarios rootless
 y crea la caché de imágenes y la configuración por defecto. Lo que requiera
 sudo (subuid/subgid, montar /tmp, sysctls) solo se imprime.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, _ := config.Load()
-		u, _ := user.Current()
-		fail := 0
-		for _, c := range doctorChecks(cfg, u.Username) {
-			ok, detail := c.run()
-			if ok {
-				printCheck("✔", c.name, detail)
-				continue
-			}
-			mark := "✖"
-			if c.warn {
-				mark = "⚠"
-			} else {
-				fail++
-			}
-			printCheck(mark, c.name, detail)
-			fmt.Printf("   → arreglar: %s\n", c.fix)
-			if !c.warn && doctorFix && c.auto != nil {
+		_, err := runDoctor(doctorFix)
+		return err
+	},
+}
+
+// runDoctor ejecuta todos los chequeos; con fix=true intenta arreglar
+// automáticamente los que no requieran sudo. Devuelve los que siguen en rojo.
+func runDoctor(fix bool) ([]*doctorCheck, error) {
+	cfg, _ := config.Load()
+	u, _ := user.Current()
+	fail := 0
+	var pendientes []*doctorCheck
+	for _, c := range doctorChecks(cfg, u.Username) {
+		ok, detail := c.run()
+		if ok {
+			printCheck("✔", c.name, detail)
+			continue
+		}
+		mark := "✖"
+		if c.warn {
+			mark = "⚠"
+		} else {
+			fail++
+		}
+		printCheck(mark, c.name, detail)
+		fmt.Printf("   → arreglar: %s\n", c.fix)
+		if !c.warn {
+			if fix && c.auto != nil {
 				nota, err := c.auto()
 				if err != nil {
 					fmt.Printf("   ⚠ auto-fix falló: %v\n", err)
-					continue
-				}
-				if ok2, d2 := c.run(); ok2 {
+				} else if ok2, d2 := c.run(); ok2 {
 					fail--
 					if nota != "" {
 						fmt.Printf("   ✔ arreglado automáticamente (%s)\n", nota)
@@ -80,28 +88,30 @@ sudo (subuid/subgid, montar /tmp, sysctls) solo se imprime.`,
 						fmt.Printf("   ✔ arreglado automáticamente\n")
 					}
 					printCheck("✔", c.name, d2)
+					continue
 				} else if nota != "" {
 					fmt.Printf("   ⚠ sigue en rojo tras el auto-fix (%s)\n", nota)
 				}
 			}
+			pendientes = append(pendientes, c)
 		}
-		if fail > 0 {
-			fmt.Printf("\n✖ %d comprobaciones en rojo", fail)
-			if !doctorFix {
-				fmt.Print(" — prueba `flowsint-desk doctor --fix` para los arreglos automáticos")
-			}
-			fmt.Println()
-			return fmt.Errorf("%d comprobaciones en rojo", fail)
+	}
+	if fail > 0 {
+		fmt.Printf("\n✖ %d comprobaciones en rojo", fail)
+		if !fix {
+			fmt.Print(" — prueba `flowsint-desk setup` (o `doctor --fix`) para los arreglos automáticos")
 		}
-		fmt.Println("\n✔ todos los requisitos OK")
-		vault := cfg.VaultPath
-		if st, err := os.Stat(filepath.Join(vault, "config")); err == nil && !st.IsDir() {
-			fmt.Println("→ siguiente paso: flowsint-desk up")
-		} else {
-			fmt.Println("→ siguiente paso: flowsint-desk init --vault " + vault)
-		}
-		return nil
-	},
+		fmt.Println()
+		return pendientes, fmt.Errorf("%d comprobaciones en rojo", fail)
+	}
+	fmt.Println("\n✔ todos los requisitos OK")
+	vault := cfg.VaultPath
+	if st, err := os.Stat(filepath.Join(vault, "config")); err == nil && !st.IsDir() {
+		fmt.Println("→ siguiente paso: flowsint-desk up")
+	} else {
+		fmt.Println("→ siguiente paso: flowsint-desk init --vault " + vault)
+	}
+	return pendientes, nil
 }
 
 func printCheck(mark, name, detail string) {
