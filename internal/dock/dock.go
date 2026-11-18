@@ -74,6 +74,12 @@ func Run(env []string, name string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// Logs devuelve las últimas `tail` líneas de los logs de un contenedor
+// (json-file dentro del data-root tmpfs: nunca tocan el disco local).
+func Logs(env []string, name string, tail int) (string, error) {
+	return Run(env, "docker", "logs", "--tail", fmt.Sprint(tail), name)
+}
+
 // CP copia entre host y contenedor con `docker cp` (el daemon escribe como
 // root del user-ns; escribir directo desde el host deja ficheros "nobody"
 // dentro del contenedor rootless y el proceso del contenedor no los lee).

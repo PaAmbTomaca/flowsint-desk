@@ -41,5 +41,5 @@ func Execute() {
 
 func init() {
 	rootCmd.AddCommand(doctorCmd, setupCmd, initCmd, upCmd, downCmd, statusCmd,
-		backupCmd, snapshotsCmd, unlockCmd, forgetCmd, passwdCmd)
+		backupCmd, snapshotsCmd, unlockCmd, forgetCmd, passwdCmd, logsCmd)
 }

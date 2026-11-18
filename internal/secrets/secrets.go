@@ -70,6 +70,23 @@ func WriteEnv(path string, m map[string]string) error {
 	return os.WriteFile(path, []byte(sb.String()), 0o600)
 }
 
+// Redact enmascara en text todos los valores de sec con longitud >= 8,
+// sustituyéndolos por "***" (los más largos primero). NUNCA devuelve los
+// valores: sirve para imprimir logs/avisos sin comprometer secretos.
+func Redact(text string, sec map[string]string) string {
+	vals := make([]string, 0, len(sec))
+	for _, v := range sec {
+		if len(v) >= 8 {
+			vals = append(vals, v)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(vals)))
+	for _, v := range vals {
+		text = strings.ReplaceAll(text, v, "***")
+	}
+	return text
+}
+
 // ReadEnv lee un fichero KEY=VAL.
 func ReadEnv(path string) (map[string]string, error) {
 	b, err := os.ReadFile(path)

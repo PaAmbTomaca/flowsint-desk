@@ -112,6 +112,7 @@ flowsint-desk forget                          # retention (24 h covered, 30 d, 1
 #   (restic keep-hourly=N = N hours covered, 1 snapshot per hour, plus the
 #    oldest of each bucket; keep-daily/keep-monthly likewise per day/month)
 flowsint-desk passwd                          # change the passphrase
+flowsint-desk logs [--tail N] [filter]        # logs of the live session's containers, sanitized (secrets → ***)
 ```
 
 > Note (several vaults / tests): the passphrase is resolved in this order:
@@ -152,7 +153,11 @@ there is no time, the last automatic snapshot stands.
   persistent on disk is the **encrypted** restic repo in pCloud (plus the
   secret-free config and the public image cache). On shutdown the tmpfs
   disappears: data remains locked only in the encrypted exports.
-- `umask 077`, `RLIMIT_CORE=0`, no secrets in argv or logs. The passphrase
+- `umask 077`, `RLIMIT_CORE=0`, no secrets in argv or logs. **Warnings and logs are
+  non-compromising**: any external output (compose, restic, `docker logs`) is
+  masked first (secrets and passphrase → `***`); if startup fails, `up` dumps the
+  involved containers' logs already sanitized, and `flowsint-desk logs` shows them live.
+- The passphrase
   reaches restic via `RESTIC_PASSWORD_FILE` (a 0600 file in tmpfs, deleted at
   the end).
 - Before writing anything, `statfs` verifies the run directory is on tmpfs

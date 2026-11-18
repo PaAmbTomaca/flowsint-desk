@@ -110,6 +110,7 @@ flowsint-desk forget                          # retención (24 h cubiertas, 30 d
 #   (keep-hourly=N de restic = N horas cubiertas, 1 snapshot por hora, más el
 #    más antiguo de cada bucket; keep-daily/keep-monthly igual por día/mes)
 flowsint-desk passwd                          # cambiar la frase de paso
+flowsint-desk logs [--tail N] [filtro]        # logs de los contenedores de la sesión viva, saneados (secretos → ***)
 ```
 
 > Nota (varios almacenes / pruebas): la frase se resuelve en este orden:
@@ -150,6 +151,10 @@ snapshot automático.
   desaparece: los datos quedan blindados solo en los exports cifrados.
 - `umask 077`, `RLIMIT_CORE=0`, ningún secreto en argv ni en logs. La frase de paso
   viaja a restic por `RESTIC_PASSWORD_FILE` (fichero 0600 en tmpfs, borrado al final).
+- **Avisos y logs no comprometedores**: antes de imprimir cualquier salida externa
+  (compose, restic, `docker logs`) se enmascaran los secretos y la frase (`***`);
+  si falla el arranque, `up` vuelca automáticamente los logs de los contenedores
+  implicados ya saneados, y `flowsint-desk logs` los muestra en vivo.
 - Antes de escribir nada se comprueba con `statfs` que el directorio de ejecución
   está en tmpfs (`TMPFS_MAGIC`); si no, se niega.
 - El Docker del sistema (rootful) no se toca nunca: todo va por `DOCKER_HOST`

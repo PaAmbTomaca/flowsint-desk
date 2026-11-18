@@ -223,6 +223,7 @@
     <div class="card bad"><h4>Nunca root</h4><p>La CLI hace <code>exit(1)</code> si <code>euid==0</code>. Prohibido <code>sudo flowsint-desk ...</code> y tocar el Docker rootful.</p></div>
     <div class="card ok"><h4>Solo tmpfs para datos</h4><p>Antes de escribir cualquier dato en claro se comprueba con <code>statfs</code> que el path es tmpfs; si no, se niega.</p></div>
     <div class="card ok"><h4>Sin secretos en argv ni logs</h4><p><code>umask 077</code>, <code>RLIMIT_CORE=0</code>. A restic la frase le llega por <code>RESTIC_PASSWORD_FILE</code> (fichero 0600 en tmpfs, borrado al final); en pruebas, por stdin.</p></div>
+    <div class="card ok"><h4>Logs y avisos saneados</h4><p>Toda salida externa (compose, restic, <code>docker logs</code>) pasa por <code>secrets.Redact</code>: valores de <code>secrets.env</code> y la frase se enmascaran como <code>***</code> antes de imprimirse. Verificado: 0 secretos en los logs mostrados.</p></div>
     <div class="card ok"><h4>Exposición mínima</h4><p>Solo <code>127.0.0.1:5273</code>. Redis sin persistencia. El socket que ven api/celery es el del Docker rootless de la sesión.</p></div>
     <div class="card warn"><h4>Recovery ante fallos</h4><p>Tras <code>kill -9</code> o corte de luz, el siguiente <code>up</code> detecta restos del mismo <code>boot_id</code>, mata huérfanos, barre y restaura el último snapshot. Al apagar, <code>systemd-inhibit --mode=delay</code> intenta el snapshot final.</p></div>
     <div class="card warn"><h4>Verificación en cada restore</h4><p>sha256 + recuentos del <code>manifest.json</code>. Si no cuadran, no se arranca la interfaz.</p></div>
@@ -249,6 +250,7 @@
     <tr><td><code>unlock --force</code></td><td>Rompe un bloqueo caducado de otro equipo (confirmación con <code>SI</code>).</td></tr>
     <tr><td><code>forget</code></td><td>Retención (24 h / 30 d / 12 m) + prune.</td></tr>
     <tr><td><code>passwd</code></td><td>Cambia la frase de paso (<code>key add</code> con la nueva + quitar la antigua autenticándose con la nueva).</td></tr>
+    <tr><td><code>logs [--tail N] [filtro]</code></td><td>Logs de los contenedores de la sesión viva, <b>saneados</b> (secretos y frase → <code>***</code>). Si falla el arranque, <code>up</code> vuelca ya los logs de los contenedores implicados.</td></tr>
   </table>
   <p class="small">Orden de resolución de la frase: <code>runDir/passphrase</code> (tmpfs) → llavero → prompt. Si el llavero tiene la frase de otro vault, repuebla <code>/tmp/flowsint-desk-&lt;boot_id&gt;/passphrase</code> (0600) antes de arrancar.</p>
 </section>

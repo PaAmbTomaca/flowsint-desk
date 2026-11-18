@@ -47,6 +47,7 @@ var upCmd = &cobra.Command{
 		//     - todos los /tmp/flowsint-desk-*.stale: matar su daemon y sus contenedores
 		//     - el run dir actual si tiene session.json muerta o socket vivo
 		var staleDirs []string
+		var redactVals []string // valores a enmascarar (***) en avisos y logs
 		// daemons huérfanos cuyo socket ya no es alcanzable (dir renombrado):
 		if k := dock.KillOrphanDaemons(); len(k) > 0 {
 			fmt.Printf("· daemons rootless huérfanos eliminados (pids %v)\n", k)
@@ -164,6 +165,7 @@ var upCmd = &cobra.Command{
 		}
 		// 7. daemon rootless + imágenes
 		env := dock.Env(runDir)
+		redactVals = redactValues(runDir) // secretos + frase, para sanear salidas
 		logf := func(f string, a ...any) { fmt.Printf("· "+f+"\n", a...) }
 		if err := dock.StartDaemon(runDir); err != nil {
 			return err
@@ -197,7 +199,8 @@ var upCmd = &cobra.Command{
 		// 8. bases de datos
 		fmt.Println("· levantando postgres, redis, neo4j...")
 		if out, err := dock.Compose(env, runDir, "up", "-d", "--wait", "postgres", "redis", "neo4j"); err != nil {
-			return fmt.Errorf("compose up (db): %v\n%s", err, out)
+			dumpContainerLogs(env, runDir, []string{"flowsint-desk-postgres", "flowsint-desk-redis", "flowsint-desk-neo4j"}, 150)
+			return fmt.Errorf("compose up (db): %v\n%s", err, redactText(out, redactVals))
 		}
 		fmt.Println("✔ postgres, redis y neo4j healthy")
 		// 9. restaurar los datos del snapshot en las BD vacías y verificar manifest
@@ -214,7 +217,8 @@ var upCmd = &cobra.Command{
 		// 10. api, celery, app
 		fmt.Println("· levantando api, celery y app...")
 		if out, err := dock.Compose(env, runDir, "up", "-d", "--wait", "api", "celery", "app"); err != nil {
-			return fmt.Errorf("compose up (app): %v\n%s", err, out)
+			dumpContainerLogs(env, runDir, []string{"flowsint-desk-api", "flowsint-desk-celery", "flowsint-desk-app"}, 150)
+			return fmt.Errorf("compose up (app): %v\n%s", err, redactText(out, redactVals))
 		}
 		// 11. sesión
 		sess := &session.Session{PID: os.Getpid(), Port: cfg.Port, Started: time.Now().UTC().Format(time.RFC3339), Host: host, BootID: boot}
@@ -249,14 +253,14 @@ var upCmd = &cobra.Command{
 			}
 			m, err := snap.Build(env, runDir, filepath.Join(runDir, "staging"), digests, kind)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "aviso: snapshot falló:", err)
+				fmt.Fprintln(os.Stderr, "aviso: snapshot falló:", redactText(err.Error(), redactVals))
 				return
 			}
 			id, err := store.Backup(se, filepath.Join(runDir, "staging"), map[string]string{
 				"host": host, "boot": boot[:8], "tipo": kind,
 			})
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "aviso: restic backup falló:", err)
+				fmt.Fprintln(os.Stderr, "aviso: restic backup falló:", redactText(err.Error(), redactVals))
 				return
 			}
 			fmt.Printf("✔ snapshot %s guardado (%s, %d nodos, %d rels, %d tablas pg)\n",
@@ -264,7 +268,7 @@ var upCmd = &cobra.Command{
 			// retención: como mucho una vez al día
 			if cfg.ForgetDue() {
 				if out, err := store.Forget(se, cfg.KeepHourly, cfg.KeepDaily, cfg.KeepMonthly, true); err != nil {
-					fmt.Fprintln(os.Stderr, "aviso: forget falló:", err)
+					fmt.Fprintln(os.Stderr, "aviso: forget falló:", redactText(err.Error(), redactVals))
 				} else {
 					cfg.MarkForgotten()
 					_ = cfg.Save()
