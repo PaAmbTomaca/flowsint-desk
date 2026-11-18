@@ -106,7 +106,9 @@ flowsint-desk snapshots                       # fecha, host, tamaño, recuentos 
 flowsint-desk up --snapshot 3f2a9c…           # arrancar desde un snapshot antiguo
 flowsint-desk down                            # cierre ordenado de la sesión viva
 flowsint-desk unlock --force                  # romper un bloqueo caducado de otro equipo
-flowsint-desk forget                          # retención (24/h, 30/d, 12/m) + prune
+flowsint-desk forget                          # retención (24 h cubiertas, 30 d, 12 m) + prune
+#   (keep-hourly=N de restic = N horas cubiertas, 1 snapshot por hora, más el
+#    más antiguo de cada bucket; keep-daily/keep-monthly igual por día/mes)
 flowsint-desk passwd                          # cambiar la frase de paso
 ```
 
