@@ -178,6 +178,10 @@ keep_monthly = 12
 
 ## Documentación
 
+🗺️ **Mapa visual de toda la arquitectura** (componentes, flujo de `up`, dónde vive
+cada dato, snapshots, seguridad, comandos): [`docs/mapa-arquitectura.html`](docs/mapa-arquitectura.html)
+(ábrelo en el navegador).
+
 Las decisiones de arquitectura viven en [`docs/`](docs/README.md), estilo ADR:
 `docs/decisions/` son las decisiones **ya vigentes** (Docker rootless efímero,
 restic en pCloud, datos solo en tmpfs, exposición solo en loopback, frase de

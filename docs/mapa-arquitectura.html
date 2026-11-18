@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flowsint-desk — mapa de arquitectura</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --txt:#e6edf3; --mut:#8b949e; --ok:#3fb950; --info:#58a6ff;
+    --warn:#d29922; --bad:#f85149; --vio:#bc8cff; --ram:#2ea043; --disk:#b08800; --cloud:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.55 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{padding:28px 32px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#161b22,#0d1117)}
+  header h1{margin:0 0 6px;font-size:26px}
+  header p{margin:0;color:var(--mut);max-width:1000px}
+  nav{position:sticky;top:0;z-index:5;background:#0d1117ee;backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:8px 32px;display:flex;flex-wrap:wrap;gap:14px}
+  nav a{color:var(--info);text-decoration:none;font-size:13px}
+  nav a:hover{text-decoration:underline}
+  main{max-width:1180px;margin:0 auto;padding:24px 32px 80px}
+  section{margin:36px 0;padding:22px 24px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  h2{margin:0 0 14px;font-size:20px;border-left:4px solid var(--info);padding-left:10px}
+  h3{margin:20px 0 8px;font-size:16px;color:var(--mut)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card h4{margin:0 0 6px;font-size:15px}
+  .card p{margin:0;color:var(--mut);font-size:13.5px}
+  .ok{border-color:#1f6f3a}.ok h4{color:var(--ok)}
+  .bad{border-color:#6e2b28}.bad h4{color:var(--bad)}
+  .warn{border-color:#6e5a1e}.warn h4{color:var(--warn)}
+  .info{border-color:#274a6e}.info h4{color:var(--info)}
+  .vio{border-color:#4a3670}.vio h4{color:var(--vio)}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--mut);font-weight:600}
+  code{background:#0d1117;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:12.5px;color:#79c0ff}
+  pre{background:#0d1117;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.5px;line-height:1.5}
+  pre code{border:0;padding:0;background:none;color:#e6edf3}
+  .tag{display:inline-block;border-radius:20px;padding:1px 10px;font-size:11.5px;font-weight:600;margin-right:6px}
+  .t-ok{background:#12261c;color:var(--ok)} .t-info{background:#12263a;color:var(--info)}
+  .t-warn{background:#2b230f;color:var(--warn)} .t-bad{background:#2b1413;color:var(--bad)}
+  .t-vio{background:#221536;color:var(--vio)} .t-ram{background:#0f2a18;color:#7ee2a0}
+  .t-disk{background:#2b230f;color:#e3c566} .t-cloud{background:#12263a;color:#79c0ff}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 0;font-size:12.5px;color:var(--mut)}
+  svg{width:100%;height:auto;display:block;background:#0a0e14;border:1px solid var(--line);border-radius:10px}
+  .steps{counter-reset:s;list-style:none;margin:0;padding:0}
+  .steps li{counter-increment:s;position:relative;padding:10px 12px 10px 46px;margin:8px 0;background:var(--panel2);border:1px solid var(--line);border-radius:10px;font-size:13.5px}
+  .steps li::before{content:counter(s);position:absolute;left:12px;top:9px;width:24px;height:24px;border-radius:50%;background:var(--info);color:#0d1117;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:13px}
+  .steps li b{color:var(--txt)}
+  .small{font-size:12.5px;color:var(--mut)}
+  a{color:var(--info)}
+  .kbd{font-family:ui-monospace,monospace;background:#0d1117;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🗺️ flowsint-desk — mapa de arquitectura</h1>
+  <p>Flowsint (OSINT de grafos) en el PC de escritorio, <b>efímero y cifrado</b>: los datos solo existen en claro en RAM (tmpfs)
+  mientras la app está abierta; lo único persistente es un repo <b>restic cifrado en pCloud</b>, protegido por una sola frase de paso.
+  Sin sudo, sin tocar el Docker rootful del sistema, sin modificar Flowsint. <span class="small">Repo público: github.com/PaAmbTomaca/flowsint-desk · generado con Mistral Large 4</span></p>
+</header>
+<nav>
+  <a href="#vision">Visión</a><a href="#arq">Arquitectura</a><a href="#up">Ciclo de <code>up</code></a>
+  <a href="#datos">¿Dónde vive cada cosa?</a><a href="#snapshot">Snapshots</a><a href="#seguridad">Seguridad</a>
+  <a href="#bloqueo">Bloqueo entre equipos</a><a href="#comandos">Comandos</a><a href="#repo">Estructura del repo</a>
+  <a href="#fases">Fases y estado</a><a href="#adr">Decisiones y propuestas</a>
+</nav>
+<main>
+
+<section id="vision">
+  <h2>1 · Visión general</h2>
+  <div class="grid">
+    <div class="card ok"><h4>✔ Efímero</h4><p>Al cerrar la sesión (o al apagar el PC) la tmpfs desaparece: no queda nada en claro en el disco local.</p></div>
+    <div class="card info"><h4>✔ Una sola llave</h4><p>La frase de paso abre el repo restic cifrado en pCloud: datos + secretos internos de Flowsint (<code>AUTH_SECRET</code>, <code>MASTER_VAULT_KEY_V1</code>, contraseñas de BD, vault de claves API).</p></div>
+    <div class="card info"><h4>✔ Sin sudo</h4><p>Docker rootless con daemon por sesión y data-root en tmpfs. La CLI se niega a arrancar como root (euid=0 → exit).</p></div>
+    <div class="card ok"><h4>✔ Sin tocar Flowsint</h4><p>Imágenes oficiales tal cual; todo se configura desde fuera con un compose embebido en el binario.</p></div>
+    <div class="card warn"><h4>✔ Solo loopback</h4><p>Se publica únicamente <code>127.0.0.1:5273</code>. Ni API, ni Neo4j, ni Postgres, ni Redis salen de la máquina. Redis va sin persistencia.</p></div>
+    <div class="card vio"><h4>↔ Dos equipos</h4><p>El mismo vault en pCloud sirve a torre y portátil, con bloqueo por latido (best-effort, pCloud no es atómico).</p></div>
+  </div>
+</section>
+
+<section id="arq">
+  <h2>2 · Arquitectura (mapa de componentes)</h2>
+  <div class="legend">
+    <span class="tag t-ram">RAM / tmpfs (se pierde al cerrar)</span>
+    <span class="tag t-disk">disco local (solo config sin secretos + caché de imágenes públicas)</span>
+    <span class="tag t-cloud">pCloud (repo restic CIFRADO + lock)</span>
+    <span class="tag t-bad">prohibido (Docker rootful del sistema)</span>
+  </div>
+  <svg viewBox="0 0 1160 640" role="img" aria-label="Diagrama de arquitectura">
+    <defs>
+      <marker id="flecha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>
+      <marker id="flechaOk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#3fb950"/></marker>
+    </defs>
+    <!-- HOST -->
+    <rect x="10" y="10" width="760" height="620" rx="14" fill="#12261c" stroke="#2ea043" stroke-width="1.5"/>
+    <text x="28" y="36" fill="#7ee2a0" font-size="15" font-weight="700">HOST (CachyOS, usuario pollo, kernel 7.x) — TODO EN RAM/tmpfs</text>
+    <!-- CLI -->
+    <rect x="30" y="60" width="200" height="64" rx="10" fill="#1c2330" stroke="#58a6ff"/>
+    <text x="130" y="85" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="700">flowsint-desk (Go)</text>
+    <text x="130" y="103" fill="#8b949e" font-size="11" text-anchor="middle">cobra · umask 077 · RLIMIT_CORE=0 · anti-root</text>
+    <!-- run dir tmpfs -->
+    <rect x="30" y="150" width="330" height="120" rx="10" fill="#0f2a18" stroke="#2ea043" stroke-dasharray="5 4"/>
+    <text x="46" y="172" fill="#7ee2a0" font-size="12" font-weight="700">/tmp/flowsint-desk-&lt;boot_id&gt;/  (tmpfs, 0700)</text>
+    <text x="46" y="192" fill="#8b949e" font-size="11.5">docker.sock · dockerd-data (data-root) · compose.yml · compose.env</text>
+    <text x="46" y="208" fill="#8b949e" font-size="11.5">secrets.env (0600) · passphrase (0600) · staging/ · restore/ · session.json</text>
+    <text x="46" y="224" fill="#8b949e" font-size="11.5">restic-pass (0600) · restic-cache/ · neo4j-import/</text>
+    <!-- daemon rootless -->
+    <rect x="260" y="60" width="220" height="64" rx="10" fill="#0f2a18" stroke="#2ea043"/>
+    <text x="370" y="85" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="700">Docker rootless (userns)</text>
+    <text x="370" y="103" fill="#8b949e" font-size="11" text-anchor="middle">rootlesskit + slirp4netns + dockerd-rootless.sh · data-root en tmpfs</text>
+    <!-- red + servicios -->
+    <rect x="410" y="150" width="340" height="330" rx="10" fill="#0a1a12" stroke="#2ea043"/>
+    <text x="580" y="172" fill="#7ee2a0" font-size="12" font-weight="700">red flowsint-desk-net (interna, sin salida)</text>
+    <g font-size="11.5" fill="#e6edf3">
+      <rect x="426" y="186" width="150" height="52" rx="8" fill="#1c2330" stroke="#58a6ff"/><text x="501" y="208" text-anchor="middle" font-weight="700">app (nginx :8080)</text><text x="501" y="226" fill="#8b949e" text-anchor="middle" font-size="10.5">UI + proxy /api/ → api:5001</text>
+      <rect x="584" y="186" width="150" height="52" rx="8" fill="#1c2330" stroke="#58a6ff"/><text x="659" y="208" text-anchor="middle" font-weight="700">api (:5001)</text><text x="659" y="226" fill="#8b949e" text-anchor="middle" font-size="10.5">FastAPI · migraciones al arrancar</text>
+      <rect x="426" y="250" width="150" height="52" rx="8" fill="#1c2330" stroke="#58a6ff"/><text x="501" y="272" text-anchor="middle" font-weight="700">celery (worker)</text><text x="501" y="290" fill="#8b949e" text-anchor="middle" font-size="10.5">enrichers · SKIP_MIGRATIONS</text>
+      <rect x="584" y="250" width="150" height="52" rx="8" fill="#1c2330" stroke="#d29922"/><text x="659" y="272" text-anchor="middle" font-weight="700">postgres:15</text><text x="659" y="290" fill="#8b949e" text-anchor="middle" font-size="10.5">volumen pg_data → tmpfs</text>
+      <rect x="426" y="314" width="150" height="52" rx="8" fill="#1c2330" stroke="#d29922"/><text x="501" y="336" text-anchor="middle" font-weight="700">neo4j:5 (+APOC)</text><text x="501" y="354" fill="#8b949e" text-anchor="middle" font-size="10.5">EL GRAFO · volúmenes data/logs → tmpfs</text>
+      <rect x="584" y="314" width="150" height="52" rx="8" fill="#1c2330" stroke="#d29922"/><text x="659" y="336" text-anchor="middle" font-weight="700">redis:7</text><text x="659" y="354" fill="#8b949e" text-anchor="middle" font-size="10.5">--save "" --appendonly no</text>
+    </g>
+    <rect x="426" y="378" width="308" height="88" rx="8" fill="#221536" stroke="#bc8cff"/>
+    <text x="580" y="400" fill="#bc8cff" font-size="11.5" text-anchor="middle" font-weight="700">api y celery montan el socket rootless como /var/run/docker.sock</text>
+    <text x="580" y="418" fill="#8b949e" font-size="10.5" text-anchor="middle">enrichers subfinder / naabu / httpx lanzan contenedores desde ahí</text>
+    <text x="580" y="434" fill="#8b949e" font-size="10.5" text-anchor="middle">(naabu: raw sockets no van en rootless — documentado)</text>
+    <text x="580" y="452" fill="#8b949e" font-size="10.5" text-anchor="middle">logs de los 6 contenedores: json-file dentro del data-root (tmpfs)</text>
+    <!-- puerto -->
+    <line x1="426" y1="212" x2="380" y2="212" stroke="#3fb950" stroke-width="2" marker-end="url(#flechaOk)"/>
+    <text x="403" y="204" fill="#3fb950" font-size="11" text-anchor="middle">127.0.0.1:5273</text>
+    <text x="380" y="232" fill="#8b949e" font-size="10.5" text-anchor="middle">único puerto publicado</text>
+    <!-- CLI a daemon -->
+    <line x1="230" y1="92" x2="258" y2="92" stroke="#8b949e" stroke-width="1.5" marker-end="url(#flecha)"/>
+    <text x="244" y="84" fill="#8b949e" font-size="10" text-anchor="middle">DOCKER_HOST</text>
+    <line x1="195" y1="124" x2="195" y2="148" stroke="#8b949e" stroke-width="1.5" marker-end="url(#flecha)"/>
+    <!-- disco local -->
+    <rect x="30" y="300" width="330" height="150" rx="10" fill="#2b230f" stroke="#b08800"/>
+    <text x="46" y="322" fill="#e3c566" font-size="12" font-weight="700">DISCO LOCAL (persistente, SIN datos de usuario)</text>
+    <text x="46" y="344" fill="#8b949e" font-size="11.5">~/.config/flowsint-desk/config.toml (0600, sin secretos)</text>
+    <text x="46" y="362" fill="#8b949e" font-size="11.5">~/.cache/flowsint-desk/images/*.tar (imágenes públicas)</text>
+    <text x="46" y="380" fill="#8b949e" font-size="11.5">llavero Secret Service (frase opcional, colección login)</text>
+    <text x="46" y="398" fill="#f85149" font-size="11.5">NUNCA: datos en claro, volcados, secretos, logs de sesión</text>
+    <text x="46" y="420" fill="#8b949e" font-size="11">statfs comprueba TMPFS_MAGIC antes de escribir</text>
+    <!-- pCloud -->
+    <rect x="800" y="150" width="350" height="220" rx="14" fill="#12263a" stroke="#58a6ff" stroke-width="1.5"/>
+    <text x="975" y="176" fill="#79c0ff" font-size="14" text-anchor="middle" font-weight="700">pCloud Drive (FUSE) — CIFRADO</text>
+    <rect x="820" y="196" width="310" height="70" rx="10" fill="#0d1117" stroke="#58a6ff"/>
+    <text x="975" y="220" fill="#e6edf3" font-size="12" text-anchor="middle" font-weight="700">~/pCloudDrive/flowsint-vault/</text>
+    <text x="975" y="238" fill="#8b949e" font-size="11" text-anchor="middle">repo restic: config · keys · data/ · index/ · snapshots/</text>
+    <text x="975" y="254" fill="#3fb950" font-size="11" text-anchor="middle">todo cifrado con la frase de paso</text>
+    <rect x="820" y="278" width="310" height="56" rx="10" fill="#0d1117" stroke="#d29922"/>
+    <text x="975" y="300" fill="#e6edf3" font-size="12" text-anchor="middle" font-weight="700">flowsint-desk.lock.json</text>
+    <text x="975" y="318" fill="#8b949e" font-size="11" text-anchor="middle">bloqueo entre equipos: host, pid, boot_id, latido (15 min)</text>
+    <line x1="770" y1="260" x2="818" y2="240" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#flecha)"/>
+    <text x="794" y="222" fill="#8b949e" font-size="10.5" text-anchor="middle">snapshot cifrado (restic backup)</text>
+    <line x1="770" y1="330" x2="818" y2="306" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#flecha)"/>
+    <text x="794" y="356" fill="#8b949e" font-size="10.5" text-anchor="middle">restore (restic restore)</text>
+    <!-- rootful prohibido -->
+    <rect x="800" y="400" width="350" height="90" rx="14" fill="#2b1413" stroke="#f85149" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="975" y="426" fill="#f85149" font-size="13" text-anchor="middle" font-weight="700">PROHIBIDO: Docker rootful del sistema</text>
+    <text x="975" y="446" fill="#8b949e" font-size="11" text-anchor="middle">contenedores de otros proyectos · solo `docker ps` sin DOCKER_HOST</text>
+    <text x="975" y="462" fill="#8b949e" font-size="11" text-anchor="middle">como foto de control · la CLI nunca lo usa con DOCKER_HOST</text>
+    <line x1="480" y1="124" x2="820" y2="430" stroke="#f85149" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#flecha)"/>
+    <text x="640" y="270" fill="#f85149" font-size="11" text-anchor="middle">✗ sin acceso</text>
+    <!-- leyenda inferior -->
+    <text x="30" y="500" fill="#8b949e" font-size="11.5">Flujo de un dato OSINT: UI → app → api → postgres/neo4j (tmpfs) → snapshot → staging (tmpfs) → restic → pCloud cifrado. Al cerrar: la tmpfs se pierde.</text>
+    <text x="30" y="522" fill="#8b949e" font-size="11.5">Restauración: restic restore → staging tmpfs → secretos ANTES de crear contenedores → BDs vacías → restore verificado contra manifest.json → si no cuadra, NO se arranca la UI.</text>
+    <text x="30" y="544" fill="#8b949e" font-size="11.5">Imágenes: caché en disco (públicas) → `docker load` al daemon rootless en cada `up`; si no hay caché, pull a ghcr.io.</text>
+  </svg>
+</section>
+
+<section id="up">
+  <h2>3 · Ciclo de vida de <code>flowsint-desk up</code> (paso a paso)</h2>
+  <ol class="steps">
+    <li><b>Run dir en tmpfs</b> — crea <code>/tmp/flowsint-desk-&lt;boot_id&gt;/</code> y exige con <code>statfs</code> que sea tmpfs (<code>TMPFS_MAGIC</code>); si no, se niega.</li>
+    <li><b>Limpieza de restos</b> — mata daemons rootless huérfanos (escaneo de <code>/proc/*/cmdline</code> por <code>/tmp/flowsint-desk-</code>), barre dirs <code>.stale</code> y volúmenes viejos (p. ej. <code>auth.ini</code> de Neo4j con otra contraseña).</li>
+    <li><b>Puerto libre</b> — comprueba <code>127.0.0.1:5273</code> (configurable).</li>
+    <li><b>Desbloquea el almacén ANTES de tocar nada</b> — frase en orden: <code>runDir/passphrase</code> (tmpfs) → llavero → prompt sin eco (stdin en pruebas). Frase incorrecta → error y paro, sin tocar el bloqueo.</li>
+    <li><b>Bloqueo entre equipos</b> — <code>lock.json</code> en el vault: si otro host tiene latido &lt; 15 min, se niega; si está caducado, sugiere <code>unlock --force</code>.</li>
+    <li><b>Restaura el snapshot</b> — <code>restic restore</code> al staging tmpfs; recupera <b>secretos primero</b> (si no, Neo4j crea <code>auth.ini</code> con pass provisional y el healthcheck falla).</li>
+    <li><b>Compose embebido</b> — escribe <code>compose.yml</code> + <code>compose.env</code> (secrets) en el run dir.</li>
+    <li><b>Daemon rootless</b> — <code>rootlesskit</code> + <code>dockerd-rootless.sh</code> con data-root en tmpfs; carga imágenes desde la caché de disco (o pull).</li>
+    <li><b>BDs</b> — <code>compose up --wait postgres redis neo4j</code> → healthchecks OK.</li>
+    <li><b>Restore verificado</b> — <code>pg_dump</code> plano → postgres; APOC cypher → <code>cypher-shell -f</code> en Neo4j vacío + migraciones idempotentes; compara recuentos con <code>manifest.json</code> → si no cuadran, baja todo y NO arranca la UI.</li>
+    <li><b>App</b> — <code>compose up --wait api celery app</code> → session.json → imprime <code>http://127.0.0.1:5273</code>.</li>
+    <li><b>Bucle de sesión</b> — snapshot automático cada 10 min (configurable) · latido del lock cada 1 min · <code>SIGUSR1</code> = <code>backup</code> inmediato · <code>systemd-inhibit</code> retrasa el apagado para el snapshot final.</li>
+    <li><b>Cierre (Ctrl+C / SIGTERM / apagado)</b> — snapshot final → <code>compose down</code> → wipe del data-root desde un contenedor alpine dentro del user-ns → daemon parado → run dir borrado → lock liberado. Tras <code>kill -9</code>, el siguiente <code>up</code> detecta y limpia los restos del mismo boot_id.</li>
+  </ol>
+</section>
+
+<section id="datos">
+  <h2>4 · ¿Dónde vive cada cosa?</h2>
+  <table>
+    <tr><th>Qué</th><th>Dónde</th><th>¿En claro?</th><th>¿Sobrevive al cerrar/apagar?</th></tr>
+    <tr><td>Grafo Neo4j, Postgres, Redis, logs de contenedores, secretos de Flowsint, staging de snapshots, run dir</td><td><span class="tag t-ram">RAM / tmpfs</span> <code>/tmp/flowsint-desk-&lt;boot_id&gt;/</code></td><td>Sí, mientras la sesión está abierta</td><td><b>No</b> — la tmpfs se va con la RAM</td></tr>
+    <tr><td>Repo restic (snapshots: <code>postgres.sql</code>, <code>neo4j.cypher</code>, <code>secrets.env</code>, <code>manifest.json</code>)</td><td><span class="tag t-cloud">pCloud</span> <code>~/pCloudDrive/flowsint-vault/</code></td><td><b>No</b> — cifrado con la frase de paso</td><td><b>Sí</b> (única persistencia)</td></tr>
+    <tr><td><code>flowsint-desk.lock.json</code> (bloqueo entre equipos)</td><td><span class="tag t-cloud">pCloud</span> (dentro del vault)</td><td>Metadatos (host/pid/latido), no datos</td><td>Sí, hasta liberar</td></tr>
+    <tr><td><code>config.toml</code> (vault_path, port, intervalos, retención)</td><td><span class="tag t-disk">disco local</span> <code>~/.config/flowsint-desk/</code> 0600</td><td>Sin secretos (doctor lo escanea)</td><td>Sí</td></tr>
+    <tr><td>Caché de imágenes <code>*.tar</code></td><td><span class="tag t-disk">disco local</span> <code>~/.cache/flowsint-desk/images/</code></td><td>Imágenes públicas, sin datos de usuario</td><td>Sí</td></tr>
+    <tr><td>Frase de paso</td><td>llavero Secret Service (opcional) o solo en RAM/prompt</td><td>En el llavero cifrado del SO; nunca en argv/logs/ficheros de config</td><td>Según llavero</td></tr>
+    <tr><td>Docker rootful del sistema y sus contenedores</td><td>—</td><td>—</td><td><span class="tag t-bad">PROHIBIDO TOCAR</span> (solo <code>docker ps</code> sin DOCKER_HOST como foto de control)</td></tr>
+  </table>
+</section>
+
+<section id="snapshot">
+  <h2>5 · Qué hay en un snapshot (cifrado por restic, solo en pCloud)</h2>
+  <div class="grid">
+    <div class="card"><h4><code>postgres.sql</code></h4><p><code>pg_dump</code> en texto plano ejecutado dentro del contenedor. restic cifra y deduplica después (nunca cifrar antes: rompe la dedup).</p></div>
+    <div class="card"><h4><code>neo4j.cypher</code></h4><p>Export APOC del grafo completo (plain). Se restaura con <code>cypher-shell -f</code> en BD vacía + migraciones idempotentes (<code>assets/migrations/*.cypher</code>). Verificado: idéntico salvo <code>elementId</code>, que nada persiste fuera de Neo4j.</p></div>
+    <div class="card"><h4><code>secrets.env</code></h4><p><code>AUTH_SECRET</code>, <code>MASTER_VAULT_KEY_V1</code> (base64:32B), contraseñas de Postgres/Neo4j. Si se pierde la master key, se pierden las claves de API cifradas (AES-256-GCM + HKDF por usuario).</p></div>
+    <div class="card"><h4><code>manifest.json</code></h4><p>Versión de la CLI, digests de imágenes, host, fecha, sha256 de cada fichero y recuentos de control (filas pg por tabla, nodos por etiqueta, relaciones). Tras restaurar se comparan: <b>si no coinciden, no se arranca la UI</b>.</p></div>
+  </div>
+  <h3>Retención (<code>forget</code>)</h3>
+  <p class="small">Por defecto 24 horas cubiertas, 30 días, 12 meses + prune (una vez al día como mucho, nunca en cada snapshot). Semántica restic: <code>--keep-hourly=N</code> = N horas cubiertas (1 snapshot/hora + el más antiguo del bucket).</p>
+  <h3>Claves del repo</h3>
+  <p class="small"><code>passwd</code> hace <code>restic key add</code> con la frase nueva y quita la antigua <b>autenticándose con la nueva</b> (restic se niega a quitar la clave de la sesión actual).</p>
+</section>
+
+<section id="seguridad">
+  <h2>6 · Modelo de seguridad</h2>
+  <div class="grid">
+    <div class="card bad"><h4>Nunca root</h4><p>La CLI hace <code>exit(1)</code> si <code>euid==0</code>. Prohibido <code>sudo flowsint-desk ...</code> y tocar el Docker rootful.</p></div>
+    <div class="card ok"><h4>Solo tmpfs para datos</h4><p>Antes de escribir cualquier dato en claro se comprueba con <code>statfs</code> que el path es tmpfs; si no, se niega.</p></div>
+    <div class="card ok"><h4>Sin secretos en argv ni logs</h4><p><code>umask 077</code>, <code>RLIMIT_CORE=0</code>. A restic la frase le llega por <code>RESTIC_PASSWORD_FILE</code> (fichero 0600 en tmpfs, borrado al final); en pruebas, por stdin.</p></div>
+    <div class="card ok"><h4>Exposición mínima</h4><p>Solo <code>127.0.0.1:5273</code>. Redis sin persistencia. El socket que ven api/celery es el del Docker rootless de la sesión.</p></div>
+    <div class="card warn"><h4>Recovery ante fallos</h4><p>Tras <code>kill -9</code> o corte de luz, el siguiente <code>up</code> detecta restos del mismo <code>boot_id</code>, mata huérfanos, barre y restaura el último snapshot. Al apagar, <code>systemd-inhibit --mode=delay</code> intenta el snapshot final.</p></div>
+    <div class="card warn"><h4>Verificación en cada restore</h4><p>sha256 + recuentos del <code>manifest.json</code>. Si no cuadran, no se arranca la interfaz.</p></div>
+  </div>
+</section>
+
+<section id="bloqueo">
+  <h2>7 · Bloqueo entre equipos (torre ↔ portátil)</h2>
+  <p><code>flowsint-desk.lock.json</code> en el vault: <code>{host, pid, boot_id, iniciado, latido}</code>. Al arrancar, si otro host tiene latido &lt; 15 min → se niega; si está caducado → sugiere <code>unlock --force</code> (pide escribir <code>SI</code>). Cada minuto se renueva el latido; antes de cada snapshot se relee el lock: si otro equipo lo cogió, se deja de guardar y avisa. <b>pCloud no es atómico</b>: es una protección para una persona con dos equipos, no para concurrencia real.</p>
+</section>
+
+<section id="comandos">
+  <h2>8 · Comandos</h2>
+  <table>
+    <tr><th>Comando</th><th>Qué hace</th></tr>
+    <tr><td><code>doctor [--fix]</code></td><td>26 chequeos del entorno, cada uno con su “→ arreglar”. <code>--fix</code> instala sin sudo lo instalable (restic con sha256 verificado, rootlesskit/slirp4netns/fuse-overlayfs, dockerd-rootless.sh) y crea caché+config.</td></tr>
+    <tr><td><code>setup</code></td><td>= <code>doctor --fix</code> + lista solo los pendientes que requieren sudo (normalmente <code>/etc/subuid</code>, <code>/etc/subgid</code>). La CLI nunca ejecuta sudo.</td></tr>
+    <tr><td><code>init --vault RUTA</code></td><td>Crea el repo restic, genera los secretos y el primer snapshot (vacío). Pide la frase 2 veces (mín. 8) y si guardarla en el llavero.</td></tr>
+    <tr><td><code>up [--snapshot ID]</code></td><td>Desbloquea → lock → restaura → levanta Flowsint en <code>127.0.0.1:5273</code>. Queda en primer plano: auto-snapshot cada 10 min, latido cada 1 min; Ctrl+C = snapshot final + cierre ordenado.</td></tr>
+    <tr><td><code>down</code></td><td>Cierre ordenado de la sesión viva (snapshot final + limpieza total).</td></tr>
+    <tr><td><code>status</code></td><td>Corriendo o no, bloqueo (host/latido), último snapshot.</td></tr>
+    <tr><td><code>backup</code></td><td>Snapshot inmediato de la sesión en marcha (SIGUSR1).</td></tr>
+    <tr><td><code>snapshots</code></td><td>Lista: fecha, host, tamaño, recuentos del manifest.</td></tr>
+    <tr><td><code>unlock --force</code></td><td>Rompe un bloqueo caducado de otro equipo (confirmación con <code>SI</code>).</td></tr>
+    <tr><td><code>forget</code></td><td>Retención (24 h / 30 d / 12 m) + prune.</td></tr>
+    <tr><td><code>passwd</code></td><td>Cambia la frase de paso (<code>key add</code> con la nueva + quitar la antigua autenticándose con la nueva).</td></tr>
+  </table>
+  <p class="small">Orden de resolución de la frase: <code>runDir/passphrase</code> (tmpfs) → llavero → prompt. Si el llavero tiene la frase de otro vault, repuebla <code>/tmp/flowsint-desk-&lt;boot_id&gt;/passphrase</code> (0600) antes de arrancar.</p>
+</section>
+
+<section id="repo">
+  <h2>9 · Estructura del repo</h2>
+  <pre><code>flowsint-desk/
+├── main.go                     → internal/cli (cobra)
+├── internal/
+│   ├── cli/        comandos: doctor, setup, init, up, down, status, backup, snapshots, unlock, forget, passwd
+│   ├── config/     ~/.config/flowsint-desk/config.toml (0600, sin secretos)
+│   ├── run/        run dir tmpfs + statfs TMPFS_MAGIC + boot_id
+│   ├── dock/       rootlesskit/dockerd rootless, imágenes, compose, wipe, huérfanos
+│   ├── store/      wrapper restic (frase siempre por RESTIC_PASSWORD_FILE)
+│   ├── snap/       build/restore de snapshots + manifest + verificación
+│   ├── secrets/    generación de AUTH_SECRET / MASTER_VAULT_KEY_V1 / passwords
+│   ├── session/    session.json (pid, puerto, host, boot)
+│   ├── lock/       bloqueo entre equipos (latido 15 min)
+│   └── passphrase/ frase de paso (llavero go-keyring o prompt sin eco)
+├── assets/         compose.yml embebido + migrations/*.cypher (Neo4j idempotentes)
+├── docs/           ADRs (decisions/), propuestas (proposals/), research/, este mapa
+├── dist/           (gitignored) binario compilado + vault-test
+├── flowsint/       (gitignored) referencia upstream de solo lectura
+└── README.md / README.en.md</code></pre>
+</section>
+
+<section id="fases">
+  <h2>10 · Fases del proyecto y estado</h2>
+  <table>
+    <tr><th>Fase</th><th>Contenido</th><th>Estado</th></tr>
+    <tr><td>0</td><td>Comprobar supuestos (rootless, tmpfs, método de volcado Neo4j idéntico)</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
+    <tr><td>1</td><td>Arranque/parada: doctor, init, up, down + caché de imágenes</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
+    <tr><td>2</td><td>Snapshots restic, restauración verificada, snapshots, up --snapshot, forget</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
+    <tr><td>3</td><td>Bloqueo, llavero, señales, limpieza tras kill -9, systemd-inhibit</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
+    <tr><td>4</td><td>Batería de aceptación (9 pruebas) sobre dist/vault-test + vault real + passwd/forget</td><td><span class="tag t-ok">✔ 9/9 + extra</span></td></tr>
+  </table>
+  <h3>Pruebas de aceptación ejecutadas (salida cruda en los informes)</h3>
+  <p class="small">doctor verde · 0 secretos en ~/.config (control positivo) · up→siembra→backup→down→limpieza · re-up con grafo idéntico (salvo elementId) + login + clave API descifrada · 0 fugas en claro en vault/disco (control positivo) · bloqueo otro host (niega / caducado / unlock --force) · kill -9 → limpieza automática · frase incorrecta → error sin tocar lock · Docker rootful intacto · almacenamiento verificado en tmpfs (volúmenes, logs, redis sin persistencia).</p>
+</section>
+
+<section id="adr">
+  <h2>11 · Decisiones (ADRs) y propuestas</h2>
+  <table>
+    <tr><th>Ref</th><th>Tema</th><th>Estado</th></tr>
+    <tr><td><a href="decisions/0001-docker-rootless-daemon-efimero.html">ADR-0001</a> (md)</td><td>Docker rootless con daemon efímero por sesión, data-root en tmpfs</td><td><span class="tag t-ok">vigente</span></td></tr>
+    <tr><td>ADR-0002</td><td>restic cifrado en pCloud; git prohibido para datos; BD nunca en unidad sincronizada</td><td><span class="tag t-ok">vigente</span></td></tr>
+    <tr><td>ADR-0003</td><td>Datos en claro solo en tmpfs; umask/RLIMIT_CORE; logs en tmpfs</td><td><span class="tag t-ok">vigente</span></td></tr>
+    <tr><td>ADR-0004</td><td>Solo 127.0.0.1:5273; Redis sin persistencia; socket rootless en api/celery</td><td><span class="tag t-ok">vigente</span></td></tr>
+    <tr><td>ADR-0005</td><td>Una sola llave (frase); secretos dentro del snapshot cifrado; llavero opcional</td><td><span class="tag t-ok">vigente</span></td></tr>
+    <tr><td>ADR-0006</td><td>Snapshot Neo4j = APOC cypher + migraciones re-aplicadas + verificación por manifest</td><td><span class="tag t-ok">vigente</span></td></tr>
+    <tr><td>ADR-0007</td><td>Nunca ejecutar la CLI como root (euid=0 → exit 1)</td><td><span class="tag t-ok">vigente</span></td></tr>
+    <tr><td><a href="proposals/P001-podman-backend-opcional.md">P001</a></td><td>Podman como backend opcional (daemonless) — deep research 2026-11: viable pero escala <b>XL (~10–15 días)</b>; bloque de riesgo = socket rootless-to-rootless para enrichers</td><td><span class="tag t-vio">propuesta v2</span></td></tr>
+  </table>
+  <p class="small">Fuera de alcance v1: GUI, 2FA/Authelia, WebDAV/rclone, parches al código de Flowsint. Limitación documentada: naabu no funciona en rootless (raw sockets), igual con Docker rootless que con Podman.</p>
+</section>
+
+</main>
+</body>
+</html>

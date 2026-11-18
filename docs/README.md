@@ -15,8 +15,9 @@ docs/
 │   └── ...
 ├── proposals/           ← PROPUESTAS: ideas pendientes de decidir
 │   └── P001-....md      (numeradas P00N; al aprobarse pasan a decisions/)
-└── research/            ← INVESTIGACIONES a fondo que sustentan propuestas
-    └── 2026-11-....md
+├── research/            ← INVESTIGACIONES a fondo que sustentan propuestas
+│   └── 2026-11-....md
+└── mapa-arquitectura.html  ← 🗺️ MAPA VISUAL de toda la arquitectura (ábrelo en el navegador)
 ```
 
 ## Reglas
