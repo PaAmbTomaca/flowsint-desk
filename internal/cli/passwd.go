@@ -45,13 +45,16 @@ var passwdCmd = &cobra.Command{
 			return err
 		}
 		fmt.Println("✔ clave nueva añadida:", newID[:8])
-		keys, err := store.KeyList(se)
+		// OJO: quitar claves hay que hacerlo autenticándose con la clave NUEVA;
+		// restic se niega a quitar la clave que usa la sesión actual.
+		seNew := store.Env{Repo: se.Repo, PassFile: newFile, CacheDir: se.CacheDir}
+		keys, err := store.KeyList(seNew)
 		if err != nil {
 			return err
 		}
 		for _, k := range keys {
 			if k.ID != newID {
-				if err := store.KeyRemove(se, k.ID); err != nil {
+				if err := store.KeyRemove(seNew, k.ID); err != nil {
 					return fmt.Errorf("no se pudo quitar la clave antigua %s: %w", k.ID[:8], err)
 				}
 				fmt.Println("✔ clave antigua eliminada:", k.ID[:8])
