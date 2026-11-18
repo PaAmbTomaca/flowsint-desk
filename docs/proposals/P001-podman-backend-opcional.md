@@ -93,10 +93,12 @@
 
 ## Referencias
 
+- **Deep research completa (2026-11-18) con matriz de complejidad por componente
+  (S/M/L/XL, total ~10–15 días = escala XL)**: `docs/research/2026-11-podman-deep-research.md`.
 - docs.podman.io — `podman-system-service(1)` (API Docker v1.40 compatible en
-  socket unix).
+  socket unix; socket dentro de contenedor: volumen + `label=disable`).
 - Guías 2026: `DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock` +
-  `docker compose up` contra Podman rootless.
+  `docker compose` v2 contra Podman rootless.
 - Comparativas 2026 daemonless (Podman/crun) vs client-servidor (Docker):
   misma seguridad en rootless, distinta superficie (daemon con estado vs
   fork-exec).

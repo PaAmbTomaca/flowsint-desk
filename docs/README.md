@@ -13,8 +13,10 @@ docs/
 ├── decisions/           ← EXISTENTE: decisiones ya tomadas y vigentes
 │   ├── 0001-....md      (numeradas 000N, inmutables salvo correcciones menores)
 │   └── ...
-└── proposals/           ← PROPUESTAS: ideas pendientes de decidir
-    └── P001-....md      (numeradas P00N; al aprobarse pasan a decisions/)
+├── proposals/           ← PROPUESTAS: ideas pendientes de decidir
+│   └── P001-....md      (numeradas P00N; al aprobarse pasan a decisions/)
+└── research/            ← INVESTIGACIONES a fondo que sustentan propuestas
+    └── 2026-11-....md
 ```
 
 ## Reglas
@@ -47,4 +49,10 @@ docs/
 
 | # | Tema | Estado |
 |---|------|--------|
-| P001 | Podman como backend opcional (daemonless) en vez de Docker rootless | propuesta, objetivo v2 |
+| P001 | Podman como backend opcional (daemonless) en vez de Docker rootless — deep research 2026-11 con escala de complejidad **XL (~10–15 días)** en `research/2026-11-podman-deep-research.md` | propuesta, objetivo v2 |
+
+### Research (`research/`)
+
+| Fichero | Tema |
+|---|---|
+| 2026-11-podman-deep-research.md | Podman rootless 2026: arquitectura, compose vía socket, socket para enrichers, matriz S/M/L/XL por componente |
