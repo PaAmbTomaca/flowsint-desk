@@ -17,6 +17,8 @@ docs/
 │   └── P001-....md      (numeradas P00N; al aprobarse pasan a decisions/)
 ├── research/            ← INVESTIGACIONES a fondo que sustentan propuestas
 │   └── 2026-11-....md
+├── security/            ← AUDITORÍAS de seguridad
+│   └── 2026-11-auditoria-seguridad.md
 └── mapa-arquitectura.html  ← 🗺️ MAPA VISUAL de toda la arquitectura (ábrelo en el navegador)
 ```
 
@@ -57,3 +59,9 @@ docs/
 | Fichero | Tema |
 |---|---|
 | 2026-11-podman-deep-research.md | Podman rootless 2026: arquitectura, compose vía socket, socket para enrichers, matriz S/M/L/XL por componente |
+
+### Seguridad (`security/`)
+
+| Fichero | Tema |
+|---|---|
+| 2026-11-auditoria-seguridad.md | Auditoría severa 2026-11-20: 2 hallazgos altos (imágenes sin digest pin; socket rootless en api/celery), 3 medios (swap/zram, firmas en --fix, entropía de frase), riesgos aceptados y 8 controles verificados en verde |

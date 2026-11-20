@@ -227,6 +227,7 @@
     <div class="card ok"><h4>Exposición mínima</h4><p>Solo <code>127.0.0.1:5273</code>. Redis sin persistencia. El socket que ven api/celery es el del Docker rootless de la sesión.</p></div>
     <div class="card warn"><h4>Recovery ante fallos</h4><p>Tras <code>kill -9</code> o corte de luz, el siguiente <code>up</code> detecta restos del mismo <code>boot_id</code>, mata huérfanos, barre y restaura el último snapshot. Al apagar, <code>systemd-inhibit --mode=delay</code> intenta el snapshot final.</p></div>
     <div class="card warn"><h4>Verificación en cada restore</h4><p>sha256 + recuentos del <code>manifest.json</code>. Si no cuadran, no se arranca la interfaz.</p></div>
+    <div class="card vio"><h4>🛡 Auditoría severa</h4><p><a href="security/2026-11-auditoria-seguridad.md">docs/security/2026-11-auditoria-seguridad.md</a> — 2 hallazgos altos (imágenes sin pin de digest; socket rootless montado en api/celery), 3 medios, riesgos aceptados y 8 controles verificados en verde.</p></div>
   </div>
 </section>
 

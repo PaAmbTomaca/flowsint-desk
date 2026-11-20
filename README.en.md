@@ -157,6 +157,7 @@ there is no time, the last automatic snapshot stands.
   non-compromising**: any external output (compose, restic, `docker logs`) is
   masked first (secrets and passphrase → `***`); if startup fails, `up` dumps the
   involved containers' logs already sanitized, and `flowsint-desk logs` shows them live.
+- 🛡 **Severe security audit** (2026-11-20): [`docs/security/2026-11-auditoria-seguridad.md`](docs/security/2026-11-auditoria-seguridad.md) — findings with severity, evidence and mitigations (2 high: images without digest pin and rootless socket mounted in api/celery; 3 medium; 8 controls verified green).
 - The passphrase
   reaches restic via `RESTIC_PASSWORD_FILE` (a 0600 file in tmpfs, deleted at
   the end).

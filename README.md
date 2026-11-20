@@ -155,6 +155,7 @@ snapshot automático.
   (compose, restic, `docker logs`) se enmascaran los secretos y la frase (`***`);
   si falla el arranque, `up` vuelca automáticamente los logs de los contenedores
   implicados ya saneados, y `flowsint-desk logs` los muestra en vivo.
+- 🛡 **Auditoría de seguridad severa** (2026-11-20): [`docs/security/2026-11-auditoria-seguridad.md`](docs/security/2026-11-auditoria-seguridad.md) — hallazgos con severidad, evidencia y mitigaciones (2 altos: imágenes sin pin de digest y socket rootless en api/celery; 3 medios; 8 controles verificados en verde).
 - Antes de escribir nada se comprueba con `statfs` que el directorio de ejecución
   está en tmpfs (`TMPFS_MAGIC`); si no, se niega.
 - El Docker del sistema (rootful) no se toca nunca: todo va por `DOCKER_HOST`
