@@ -358,8 +358,13 @@ var upCmd = &cobra.Command{
 				if out, err := store.Forget(se, cfg.KeepHourly, cfg.KeepDaily, cfg.KeepMonthly, true); err != nil {
 					fmt.Fprintln(os.Stderr, "aviso: forget falló:", redactText(err.Error(), redactVals))
 				} else {
+					// releer antes de guardar: no pisar lo que el usuario haya
+					// editado en config.toml con la sesión abierta
 					cfg.MarkForgotten()
-					_ = cfg.Save()
+					if fresh, err := config.Load(); err == nil {
+						fresh.LastForget = cfg.LastForget
+						_ = fresh.Save()
+					}
 					fmt.Println("· retención aplicada (forget+prune):", strings.TrimSpace(out))
 				}
 			}
