@@ -119,6 +119,9 @@ func StackUp(env []string, runDir string, services ...string) (string, error) {
 			// sin healthchecks del motor: los haría systemd de usuario con
 			// temporizadores; la CLI comprueba ella misma que el servicio responde
 			"--no-healthcheck",
+			// sin volcados de memoria (acabarían en disco, en claro) y solo
+			// con las capacidades que el arranque de la imagen necesita
+			"--ulimit", "core=0:0", "--cap-drop", "ALL",
 			"--log-driver", "k8s-file",
 			// los secretos van en un fichero 0600 de la tmpfs, nunca en argv
 			"--env-file", envFile}
@@ -126,6 +129,9 @@ func StackUp(env []string, runDir string, services ...string) (string, error) {
 			// montajes de la tmpfs sin etiqueta: con SELinux hay que relajar
 			// el confinamiento de ESTE contenedor o no podrá leerlos
 			args = append(args, "--security-opt", "label=disable")
+		}
+		for _, c := range spec.caps {
+			args = append(args, "--cap-add", c)
 		}
 		args = append(args, spec.args...)
 		args = append(args, spec.image)
@@ -214,8 +220,17 @@ type svcSpec struct {
 	cmd     []string
 	probe   []string // comando dentro del contenedor que debe salir con 0
 	timeout time.Duration
-	binds   bool // monta rutas del host (socket, import de Neo4j)
+	binds   bool     // monta rutas del host (socket, import de Neo4j)
+	caps    []string // capacidades que se devuelven tras --cap-drop ALL
 }
+
+// Capacidades mínimas: las BD arrancan como root para hacer chown de su
+// volumen y bajar a su usuario; la app (nginx) solo necesita cambiar de
+// usuario; api y celery ya corren sin root y no necesitan ninguna.
+var (
+	capsDB  = []string{"CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER"}
+	capsWeb = []string{"CHOWN", "SETUID", "SETGID"}
+)
 
 // podmanSpec traduce cada servicio de assets/compose.yml a un `podman run`.
 // DEBE mantenerse igual que el compose: mismas imágenes, variables, volúmenes,
@@ -248,6 +263,7 @@ func podmanSpec(name, runDir string, v map[string]string) (svcSpec, bool) {
 			args:    []string{"-v", "flowsint-desk_pg_data:/var/lib/postgresql/data"},
 			probe:   []string{"sh", "-c", `pg_isready -U "$POSTGRES_USER"`},
 			timeout: 2 * time.Minute,
+			caps:    capsDB,
 		}, true
 	case "redis":
 		return svcSpec{
@@ -256,6 +272,7 @@ func podmanSpec(name, runDir string, v map[string]string) (svcSpec, bool) {
 			cmd:     []string{"redis-server", "--save", "", "--appendonly", "no"},
 			probe:   []string{"redis-cli", "ping"},
 			timeout: 1 * time.Minute,
+			caps:    capsDB,
 		}, true
 	case "neo4j":
 		return svcSpec{
@@ -271,6 +288,7 @@ func podmanSpec(name, runDir string, v map[string]string) (svcSpec, bool) {
 			probe:   []string{"sh", "-c", "cypher-shell " + neoAuth + " 'RETURN 1'"},
 			timeout: 5 * time.Minute,
 			binds:   true,
+			caps:    capsDB,
 		}, true
 	case "api":
 		return svcSpec{
@@ -292,6 +310,7 @@ func podmanSpec(name, runDir string, v map[string]string) (svcSpec, bool) {
 			// único puerto publicado, solo en loopback
 			args:    []string{"-p", "127.0.0.1:" + v["DESK_PORT"] + ":8080"},
 			timeout: 1 * time.Minute,
+			caps:    capsWeb,
 		}, true
 	}
 	return svcSpec{}, false
