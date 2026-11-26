@@ -82,3 +82,24 @@ func TestParseInhibitDelay(t *testing.T) {
 		}
 	}
 }
+
+func TestDearmor(t *testing.T) {
+	armored := "-----BEGIN PGP PUBLIC KEY BLOCK-----\nComment: sonda\n\naG9sYSBt\ndW5kbw==\n=AbCd\n-----END PGP PUBLIC KEY BLOCK-----\n" +
+		"-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nIQ==\n=XyZw\n-----END PGP PUBLIC KEY BLOCK-----\n"
+	got, err := dearmor([]byte(armored))
+	if err != nil || string(got) != "hola mundo!" {
+		t.Fatalf("dearmor = %q, %v", got, err)
+	}
+	// sin cabeceras ni línea en blanco
+	got, err = dearmor([]byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\naG9sYQ==\n-----END PGP PUBLIC KEY BLOCK-----\n"))
+	if err != nil || string(got) != "hola" {
+		t.Fatalf("dearmor sin cabeceras = %q, %v", got, err)
+	}
+	bin := []byte{0x99, 0x01, 0x0d, 0x04}
+	if got, _ := dearmor(bin); !reflect.DeepEqual(got, bin) {
+		t.Fatal("un llavero binario debe devolverse tal cual")
+	}
+	if _, err := dearmor([]byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n-----END PGP PUBLIC KEY BLOCK-----\n")); err == nil {
+		t.Fatal("llavero vacío debe dar error")
+	}
+}

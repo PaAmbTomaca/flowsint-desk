@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/bzip2"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -661,7 +662,21 @@ func autoArchBin(bin string) func() (string, error) {
 		if err := os.WriteFile(pf+".sig", sig, 0o600); err != nil {
 			return "", err
 		}
-		if out, err := exec.Command("gpgv", "--keyring", archKeyring, pf+".sig", pf).CombinedOutput(); err != nil {
+		// el llavero de Arch se distribuye en ASCII (armored) y gpgv solo lee
+		// llaveros binarios: se convierte a un temporal
+		kb, err := os.ReadFile(archKeyring)
+		if err != nil {
+			return "", err
+		}
+		bin, err := dearmor(kb)
+		if err != nil {
+			return "", fmt.Errorf("no se pudo leer el llavero de paquetes %s: %w", archKeyring, err)
+		}
+		kr := filepath.Join(tmp, "arch-keyring.gpg")
+		if err := os.WriteFile(kr, bin, 0o600); err != nil {
+			return "", err
+		}
+		if out, err := exec.Command("gpgv", "--keyring", kr, pf+".sig", pf).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("la FIRMA del paquete %s no es válida: no se instala (%s)", pkg, lastLine(string(out)))
 		}
 		if out, err := exec.Command("tar", "--zstd", "-xf", pf, "-C", tmp, "usr/bin/"+bin).CombinedOutput(); err != nil {
@@ -676,6 +691,58 @@ func autoArchBin(bin string) func() (string, error) {
 		}
 		return pkg + ", firma verificada con el llavero de Arch", nil
 	}
+}
+
+// dearmor convierte un llavero OpenPGP en ASCII ("-----BEGIN PGP PUBLIC KEY
+// BLOCK-----", uno o varios bloques) a binario. Si ya es binario lo devuelve
+// tal cual.
+func dearmor(b []byte) ([]byte, error) {
+	if !bytes.HasPrefix(bytes.TrimSpace(b), []byte("-----BEGIN PGP")) {
+		return b, nil
+	}
+	var out []byte
+	var b64 strings.Builder
+	dentro, cabeceras := false, false
+	flush := func() error {
+		if b64.Len() == 0 {
+			return nil
+		}
+		dec, err := base64.StdEncoding.DecodeString(b64.String())
+		if err != nil {
+			return err
+		}
+		out = append(out, dec...)
+		b64.Reset()
+		return nil
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "-----BEGIN PGP"):
+			dentro, cabeceras = true, true
+		case strings.HasPrefix(line, "-----END PGP"):
+			if err := flush(); err != nil {
+				return nil, err
+			}
+			dentro = false
+		case !dentro:
+		case cabeceras:
+			// cabeceras "Clave: valor" hasta la primera línea en blanco
+			if line == "" {
+				cabeceras = false
+			} else if !strings.Contains(line, ": ") {
+				cabeceras = false
+				b64.WriteString(line)
+			}
+		case strings.HasPrefix(line, "="): // suma CRC24 del bloque: no es dato
+		default:
+			b64.WriteString(line)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("llavero ASCII sin datos")
+	}
+	return out, nil
 }
 
 func lastLine(s string) string {
