@@ -3,7 +3,9 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,35 +39,84 @@ func (e Env) env() []string {
 	return env
 }
 
-func run(e Env, args ...string) (string, error) {
+// Errores tipados para que la CLI pueda reaccionar (p. ej. volver a pedir la
+// frase si la del llavero ya no vale) sin depender de comparar textos.
+var (
+	ErrWrongPassword = errors.New("frase de paso INCORRECTA")
+	ErrNoRepo        = errors.New("no hay repositorio restic")
+)
+
+// Códigos de salida de restic (≥ 0.17): 10 = el repositorio no existe,
+// 12 = contraseña incorrecta.
+const (
+	exitNoRepo        = 10
+	exitWrongPassword = 12
+)
+
+// run ejecuta restic y devuelve stdout y stderr POR SEPARADO: los avisos que
+// restic escribe en stderr (caché, bloqueos antiguos, reintentos sobre FUSE)
+// no deben mezclarse con el JSON de stdout, o el parseo falla aunque la
+// operación haya ido bien.
+func run(e Env, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.Command("restic", args...)
 	cmd.Env = e.env()
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	err = cmd.Run()
+	return so.String(), se.String(), err
+}
+
+// classify traduce un fallo de restic a los errores tipados (por código de
+// salida y, como red de seguridad para versiones viejas, por el texto).
+func classify(err error, stderr string) error {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		switch ee.ExitCode() {
+		case exitWrongPassword:
+			return ErrWrongPassword
+		case exitNoRepo:
+			return ErrNoRepo
+		}
+	}
+	low := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(low, "wrong password"), strings.Contains(low, "incorrect password"):
+		return ErrWrongPassword
+	case strings.Contains(low, "is there a repository at the following location"),
+		strings.Contains(low, "repository does not exist"):
+		return ErrNoRepo
+	}
+	return nil
 }
 
 // Exists comprueba que el repo existe y la frase es correcta (snapshots OK).
+// Devuelve (false, nil) si no hay repositorio, y ErrWrongPassword (envuelto)
+// si la frase no abre el repo.
 func Exists(e Env) (bool, error) {
-	out, err := run(e, "snapshots", "--json")
+	_, stderr, err := run(e, "snapshots", "--json")
 	if err != nil {
-		if strings.Contains(out, "wrong password") || strings.Contains(out, "incorrect password") || strings.Contains(out, "Wrong password") {
-			return false, fmt.Errorf("frase de paso INCORRECTA para el repositorio %s", e.Repo)
+		switch classify(err, stderr) {
+		case ErrWrongPassword:
+			return false, fmt.Errorf("%w para el repositorio %s", ErrWrongPassword, e.Repo)
+		case ErrNoRepo:
+			return false, nil
 		}
-		return false, fmt.Errorf("restic snapshots: %v: %s", err, out)
+		return false, fmt.Errorf("restic snapshots: %v: %s", err, strings.TrimSpace(stderr))
 	}
 	return true, nil
 }
 
-// Init crea el repositorio si no existe.
-func Init(e Env) (string, error) {
-	out, err := run(e, "init")
+// Init crea el repositorio. Devuelve creado=false si ya existía (sin tocarlo).
+func Init(e Env) (creado bool, err error) {
+	_, stderr, err := run(e, "init")
 	if err != nil {
-		if strings.Contains(out, "already initialized") || strings.Contains(out, "already exists") {
-			return "ya existía", nil
+		if strings.Contains(stderr, "already initialized") || strings.Contains(stderr, "already exists") {
+			return false, nil
 		}
-		return out, err
+		return false, fmt.Errorf("restic init: %v: %s", err, strings.TrimSpace(stderr))
 	}
-	return strings.TrimSpace(out), nil
+	return true, nil
 }
 
 type SnapSummary struct {
@@ -80,14 +131,15 @@ type Snap struct {
 	Time    time.Time   `json:"time"`
 	Host    string      `json:"hostname"`
 	Tags    []string    `json:"tags"`
+	Paths   []string    `json:"paths"`
 	Summary SnapSummary `json:"summary"`
 }
 
 // Snapshots lista todos los snapshots, ordenados por fecha.
 func Snapshots(e Env) ([]Snap, error) {
-	out, err := run(e, "snapshots", "--json")
+	out, stderr, err := run(e, "snapshots", "--json")
 	if err != nil {
-		return nil, fmt.Errorf("restic snapshots: %v: %s", err, out)
+		return nil, fmt.Errorf("restic snapshots: %v: %s", err, strings.TrimSpace(stderr))
 	}
 	var snaps []Snap
 	if err := json.Unmarshal([]byte(out), &snaps); err != nil {
@@ -120,49 +172,54 @@ func Backup(e Env, dir string, tags map[string]string) (string, error) {
 	for _, k := range keys {
 		args = append(args, "--tag", k+"="+tags[k])
 	}
-	out, err := run(e, args...)
+	out, stderr, err := run(e, args...)
 	if err != nil {
-		return "", fmt.Errorf("restic backup: %v: %s", err, out)
+		return "", fmt.Errorf("restic backup: %v: %s", err, strings.TrimSpace(stderr))
 	}
-	var res struct {
-		SnapshotID string `json:"snapshot_id"`
+	id := parseBackupID(out)
+	if id == "" {
+		return "", fmt.Errorf("restic backup terminó sin resumen (sin snapshot_id; salida: %.200s)", out)
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		return "", fmt.Errorf("parseando backup: %w (salida: %.200s)", err, out)
+	return id, nil
+}
+
+// parseBackupID extrae el snapshot_id de la salida de `restic backup --json`,
+// que es JSON Lines: N mensajes de progreso ("status") y al final un
+// "summary". Se recorre línea a línea y se ignora lo que no sea el resumen.
+func parseBackupID(out string) string {
+	id := ""
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var msg struct {
+			MessageType string `json:"message_type"`
+			SnapshotID  string `json:"snapshot_id"`
+		}
+		if json.Unmarshal([]byte(line), &msg) == nil && msg.MessageType == "summary" && msg.SnapshotID != "" {
+			id = msg.SnapshotID
+		}
 	}
-	return res.SnapshotID, nil
+	return id
 }
 
 // Restore restaura un snapshot a target.
 func Restore(e Env, id, target string) error {
-	out, err := run(e, "restore", id, "--target", target)
+	_, stderr, err := run(e, "restore", id, "--target", target)
 	if err != nil {
-		return fmt.Errorf("restic restore %s: %v: %s", id, err, out)
+		return fmt.Errorf("restic restore %s: %v: %s", id, err, strings.TrimSpace(stderr))
 	}
 	return nil
 }
 
-// Ls lista los paths dentro de un snapshot.
+// Ls lista los paths dentro de un snapshot (`restic ls --json` es JSON Lines:
+// una cabecera del snapshot y luego una línea por entrada).
 func Ls(e Env, id string) ([]string, error) {
-	out, err := run(e, "ls", id, "--json")
+	out, stderr, err := run(e, "ls", id, "--json")
 	if err != nil {
-		return nil, fmt.Errorf("restic ls %s: %v: %s", id, err, out)
+		return nil, fmt.Errorf("restic ls %s: %v: %s", id, err, strings.TrimSpace(stderr))
 	}
-	var res struct {
-		StructType string `json:"struct_type"`
-	}
-	_ = json.Unmarshal([]byte(out), &res)
-	var entries []struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal([]byte(out), &entries); err == nil && len(entries) > 0 {
-		paths := make([]string, 0, len(entries))
-		for _, e := range entries {
-			paths = append(paths, e.Path)
-		}
-		return paths, nil
-	}
-	// formato plano: una línea JSON por entrada
 	var paths []string
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
@@ -181,9 +238,9 @@ func Ls(e Env, id string) ([]string, error) {
 
 // Dump imprime un fichero de dentro de un snapshot a stdout (para leer manifest.json).
 func Dump(e Env, id, path string) (string, error) {
-	out, err := run(e, "dump", id, path)
+	out, stderr, err := run(e, "dump", id, path)
 	if err != nil {
-		return "", fmt.Errorf("restic dump %s %s: %v: %s", id, path, err, out)
+		return "", fmt.Errorf("restic dump %s %s: %v: %s", id, path, err, strings.TrimSpace(stderr))
 	}
 	return out, nil
 }
@@ -198,9 +255,9 @@ func Forget(e Env, keepHourly, keepDaily, keepMonthly int, prune bool) (string, 
 	if prune {
 		args = append(args, "--prune")
 	}
-	out, err := run(e, args...)
+	out, stderr, err := run(e, args...)
 	if err != nil {
-		return out, fmt.Errorf("restic forget: %v: %s", err, out)
+		return out, fmt.Errorf("restic forget: %v: %s", err, strings.TrimSpace(stderr))
 	}
 	return out, nil
 }
@@ -213,9 +270,9 @@ type Key struct {
 
 // KeyList lista las claves del repo.
 func KeyList(e Env) ([]Key, error) {
-	out, err := run(e, "key", "list", "--json")
+	out, stderr, err := run(e, "key", "list", "--json")
 	if err != nil {
-		return nil, fmt.Errorf("restic key list: %v: %s", err, out)
+		return nil, fmt.Errorf("restic key list: %v: %s", err, strings.TrimSpace(stderr))
 	}
 	var keys []Key
 	if err := json.Unmarshal([]byte(out), &keys); err != nil {
@@ -226,14 +283,16 @@ func KeyList(e Env) ([]Key, error) {
 
 // KeyAdd añade una clave nueva con la frase de newPassFile (fichero 0600 tmpfs).
 func KeyAdd(e Env, newPassFile string) (string, error) {
-	out, err := run(e, "key", "add", "--new-password-file", newPassFile, "--json")
+	stdout, stderr, err := run(e, "key", "add", "--new-password-file", newPassFile, "--json")
 	if err != nil {
-		return "", fmt.Errorf("restic key add: %v: %s", err, out)
+		return "", fmt.Errorf("restic key add: %v: %s", err, strings.TrimSpace(stderr))
 	}
+	// según la versión, el mensaje sale por stdout (JSON) o por stderr (texto)
+	out := stdout + "\n" + stderr
 	var res struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err == nil && res.ID != "" {
+	if err := json.Unmarshal([]byte(stdout), &res); err == nil && res.ID != "" {
 		return res.ID, nil
 	}
 	// salida en texto plano de restic: "saved new key with ID <id>"
@@ -247,9 +306,9 @@ func KeyAdd(e Env, newPassFile string) (string, error) {
 
 // KeyRemove elimina una clave por id.
 func KeyRemove(e Env, id string) error {
-	out, err := run(e, "key", "remove", id)
+	_, stderr, err := run(e, "key", "remove", id)
 	if err != nil {
-		return fmt.Errorf("restic key remove %s: %v: %s", id, err, out)
+		return fmt.Errorf("restic key remove %s: %v: %s", id, err, strings.TrimSpace(stderr))
 	}
 	return nil
 }

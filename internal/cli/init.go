@@ -79,11 +79,15 @@ var initCmd = &cobra.Command{
 
 		// repo restic + primer snapshot vacío (secrets.env + manifest init)
 		se := store.Env{Repo: vault, PassFile: filepath.Join(runDir, "restic-pass"), CacheDir: filepath.Join(runDir, "restic-cache")}
-		msg, err := store.Init(se)
+		creado, err := store.Init(se)
 		if err != nil {
-			return fmt.Errorf("restic init: %w (%s)", err, msg)
+			return err
 		}
-		fmt.Println("✔ repositorio restic:", msg)
+		if creado {
+			fmt.Println("✔ repositorio restic creado")
+		} else {
+			fmt.Println("✔ repositorio restic: ya existía")
+		}
 		staging := filepath.Join(runDir, "staging")
 		if err := os.MkdirAll(staging, 0o700); err != nil {
 			return err
