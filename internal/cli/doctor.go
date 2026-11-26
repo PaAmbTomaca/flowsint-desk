@@ -590,23 +590,25 @@ func autoDockerdScript() (string, error) {
 
 func autoRestic() (string, error) {
 	const ver = "0.19.1"
-	base := "https://github.com/restic/restic/releases/download/v" + ver + "/restic_" + ver + "_linux_amd64.bz2"
-	bz, err := httpGet(base)
+	const file = "restic_" + ver + "_linux_amd64.bz2"
+	base := "https://github.com/restic/restic/releases/download/v" + ver + "/"
+	bz, err := httpGet(base + file)
 	if err != nil {
 		return "", err
 	}
-	sum, err := httpGet(base + ".sha256")
+	// restic publica UN fichero SHA256SUMS por release (no un .sha256 por binario)
+	sums, err := httpGet(base + "SHA256SUMS")
 	if err != nil {
 		return "", err
 	}
-	fields := strings.Fields(string(sum))
-	if len(fields) == 0 {
-		return "", fmt.Errorf("sha256 oficial vacío")
+	want, err := sumFor(string(sums), file)
+	if err != nil {
+		return "", err
 	}
 	h := sha256.Sum256(bz)
 	got := hex.EncodeToString(h[:])
-	if got != fields[0] {
-		return "", fmt.Errorf("sha256 no cuadra (descargado %s, oficial %s)", got, fields[0])
+	if got != want {
+		return "", fmt.Errorf("sha256 no cuadra (descargado %s, oficial %s)", got, want)
 	}
 	raw, err := io.ReadAll(bzip2.NewReader(bytes.NewReader(bz)))
 	if err != nil {
@@ -615,7 +617,22 @@ func autoRestic() (string, error) {
 	if err := writeLocalBin("restic", raw); err != nil {
 		return "", err
 	}
-	return "restic v" + ver + " (sha256 verificado contra el .sha256 oficial)", nil
+	return "restic v" + ver + " (sha256 verificado contra el SHA256SUMS oficial)", nil
+}
+
+// sumFor busca en un SHA256SUMS ("<hash>  <fichero>" por línea) el hash del
+// fichero pedido.
+func sumFor(sums, file string) (string, error) {
+	for _, line := range strings.Split(sums, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && strings.TrimPrefix(f[1], "*") == file {
+			if len(f[0]) != 64 {
+				return "", fmt.Errorf("hash con formato inesperado para %s", file)
+			}
+			return strings.ToLower(f[0]), nil
+		}
+	}
+	return "", fmt.Errorf("%s no aparece en el SHA256SUMS oficial", file)
 }
 
 func autoCacheDir() (string, error) {

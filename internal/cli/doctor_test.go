@@ -31,3 +31,19 @@ func TestParseVersionYKernel(t *testing.T) {
 		t.Fatalf("parseKernel = %d %d", maj, min)
 	}
 }
+
+func TestSumFor(t *testing.T) {
+	h1 := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	h2 := "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+	sums := h1 + "  restic_0.19.1_linux_386.bz2\n" + h2 + "  restic_0.19.1_linux_amd64.bz2\n"
+	got, err := sumFor(sums, "restic_0.19.1_linux_amd64.bz2")
+	if err != nil || got != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("sumFor = %q, %v", got, err)
+	}
+	if _, err := sumFor(sums, "restic_0.19.1_linux_arm64.bz2"); err == nil {
+		t.Fatal("fichero ausente debe dar error")
+	}
+	if _, err := sumFor("corto  restic_0.19.1_linux_amd64.bz2\n", "restic_0.19.1_linux_amd64.bz2"); err == nil {
+		t.Fatal("hash truncado debe dar error")
+	}
+}
