@@ -30,7 +30,9 @@ import (
 	"flowsint-desk/internal/run"
 )
 
-const Version = "0.1.0"
+// Version de la CLI. Las versiones publicadas la fijan al compilar
+// (-ldflags "-X flowsint-desk/internal/snap.Version=…").
+var Version = "0.1.0-dev"
 
 type Manifest struct {
 	Version      string            `json:"version"`

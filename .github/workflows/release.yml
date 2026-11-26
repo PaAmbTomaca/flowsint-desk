@@ -1,0 +1,41 @@
+# Publica una versión al empujar una etiqueta vX.Y.Z: binarios estáticos con
+# la versión grabada, y sus sumas sha256, para que todos los equipos lleven
+# exactamente el mismo binario y se pueda comprobar.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # solo este job: crear la release y subir los ficheros
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: tests
+        run: go vet ./... && go test ./...
+      - name: binarios reproducibles
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          mkdir dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X flowsint-desk/internal/snap.Version=${TAG#v}" \
+              -o "dist/flowsint-desk-linux-$arch" .
+          done
+          (cd dist && sha256sum flowsint-desk-linux-* > SHA256SUMS && cat SHA256SUMS)
+      - name: publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag
