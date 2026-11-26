@@ -214,7 +214,7 @@ func stopTempDaemon(runDir string, env []string) {
 	}
 	dock.StopDaemon(runDir)
 	dock.KillOrphanDaemons(runDir + "/")
-	for _, f := range []string{"docker.sock", "dockerd.pid", "dockerd-rootless.log", "dockerd-data", "dockerd-exec", "rk-state"} {
+	for _, f := range []string{"docker.sock", "dockerd.pid", "dockerd-rootless.log", "podman-service.log", "dockerd-data", "dockerd-exec", "rk-state", "podman-data"} {
 		_ = os.RemoveAll(filepath.Join(runDir, f))
 	}
 }

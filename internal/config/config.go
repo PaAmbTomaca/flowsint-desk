@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"time"
 
+	"flowsint-desk/internal/dock"
 	"flowsint-desk/internal/sockproxy"
 
 	"github.com/BurntSushi/toml"
@@ -30,6 +31,10 @@ type Config struct {
 	// FlowsintVersion: etiqueta de las imágenes ghcr.io/reconurge/flowsint-*
 	// ("latest" o una versión concreta publicada por Flowsint).
 	FlowsintVersion string `toml:"flowsint_version"`
+	// Engine: motor de contenedores, "docker" (Docker rootless + compose) o
+	// "podman" (Podman rootless, sin daemon). Se elige en `setup`; para cambiar
+	// después: `flowsint-desk engine <otro>`.
+	Engine string `toml:"engine"`
 }
 
 var validTag = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
@@ -45,6 +50,7 @@ func Default() *Config {
 		KeepMonthly:     12,
 		DockerSocket:    sockproxy.ModeFiltered,
 		FlowsintVersion: "latest",
+		Engine:          dock.EngineDocker,
 	}
 }
 
@@ -80,16 +86,28 @@ func Load() (*Config, error) {
 	c := Default()
 	c.Path = p
 	if _, err := os.Stat(p); os.IsNotExist(err) {
-		return c, nil
+		c.applyEnv()
+		return c, c.Validate()
 	}
 	if _, err := toml.DecodeFile(p, c); err != nil {
 		return nil, fmt.Errorf("leyendo %s: %w", p, err)
 	}
 	c.Path = p
+	c.applyEnv()
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", p, err)
 	}
 	return c, nil
+}
+
+// EnvEngine fuerza el motor para este proceso (pruebas y CI; en el uso normal
+// manda config.toml).
+const EnvEngine = "FLOWSINT_DESK_ENGINE"
+
+func (c *Config) applyEnv() {
+	if e := os.Getenv(EnvEngine); e != "" {
+		c.Engine = e
+	}
 }
 
 // Validate rechaza valores con los que la sesión arrancaría para romperse
@@ -104,6 +122,9 @@ func (c *Config) Validate() error {
 	}
 	if c.SaveIntervalMin < 1 {
 		return fmt.Errorf("save_interval_min = %d no vale: mínimo 1 minuto", c.SaveIntervalMin)
+	}
+	if !dock.ValidEngine(c.Engine) {
+		return fmt.Errorf("engine = %q no vale: usa \"docker\" o \"podman\"", c.Engine)
 	}
 	if !validTag.MatchString(c.FlowsintVersion) {
 		return fmt.Errorf("flowsint_version = %q no vale: debe ser una etiqueta de imagen (p. ej. \"latest\" o \"1.2.10\")", c.FlowsintVersion)

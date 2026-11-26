@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"flowsint-desk/internal/config"
+	"flowsint-desk/internal/dock"
+
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
 )
@@ -31,6 +34,13 @@ frase de paso.`,
 		if home, err := os.UserHomeDir(); err == nil {
 			_ = os.Setenv("PATH", filepath.Join(home, ".local", "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
+		// motor de contenedores de este equipo (config.toml); una config rota
+		// la denuncia el comando que la necesite
+		if cfg, err := config.Load(); err == nil {
+			dock.SetEngine(cfg.Engine)
+		} else if e := os.Getenv(config.EnvEngine); e != "" {
+			dock.SetEngine(e)
+		}
 		// endurecimiento obligatorio: umask restrictiva y sin cores
 		syscall.Umask(0o077)
 		_ = unix.Setrlimit(unix.RLIMIT_CORE, &unix.Rlimit{Cur: 0, Max: 0})
@@ -49,5 +59,5 @@ func Execute() {
 func init() {
 	rootCmd.AddCommand(doctorCmd, setupCmd, initCmd, upCmd, downCmd, statusCmd,
 		backupCmd, snapshotsCmd, unlockCmd, forgetCmd, passwdCmd, logsCmd,
-		verifyCmd, versionCmd, imagesCmd, selftestCmd)
+		verifyCmd, versionCmd, imagesCmd, selftestCmd, engineCmd)
 }

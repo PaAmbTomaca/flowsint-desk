@@ -260,7 +260,11 @@ var upCmd = &cobra.Command{
 		if err := dock.StartDaemon(runDir); err != nil {
 			return err
 		}
-		fmt.Println("✔ Docker rootless vivo (data-root en tmpfs)")
+		if dock.IsPodman() {
+			fmt.Println("✔ Podman rootless listo (almacén en tmpfs, sin daemon)")
+		} else {
+			fmt.Println("✔ Docker rootless vivo (data-root en tmpfs)")
+		}
 		switch cfg.DockerSocket {
 		case sockproxy.ModeDirect:
 			fmt.Println("⚠ docker_socket = \"directo\": Flowsint ve el socket de Docker sin filtrar (un fallo en Flowsint daría acceso a tus ficheros)")
@@ -312,18 +316,14 @@ var upCmd = &cobra.Command{
 				}
 			}
 		}
-		// 7b. limpiar restos del proyecto en este daemon (fallos previos, kill -9):
+		// 7b. limpiar restos del proyecto en este motor (fallos previos, kill -9):
 		//     volúmenes viejos (p. ej. auth.ini de Neo4j con otra contraseña) rompen el arranque
-		_, _ = dock.Compose(env, runDir, "down", "-v", "--remove-orphans")
-		for _, v := range []string{"pg_data", "neo4j_data", "neo4j_logs", "neo4j_plugins"} {
-			_, _ = dock.Run(env, "docker", "volume", "rm", "flowsint-desk_"+v)
-		}
-		_, _ = dock.Run(env, "docker", "network", "rm", "flowsint-desk-net")
+		dock.StackReset(env, runDir)
 		// 8. bases de datos
 		fmt.Println("· levantando postgres, redis, neo4j...")
-		if out, err := dock.Compose(env, runDir, "up", "-d", "--wait", "postgres", "redis", "neo4j"); err != nil {
+		if out, err := dock.StackUp(env, runDir, "postgres", "redis", "neo4j"); err != nil {
 			dumpContainerLogs(env, runDir, []string{"flowsint-desk-postgres", "flowsint-desk-redis", "flowsint-desk-neo4j"}, 150)
-			return fmt.Errorf("compose up (db): %v\n%s", err, redactText(out, redactVals))
+			return fmt.Errorf("arranque de las bases de datos: %s\n%s", redactText(err.Error(), redactVals), redactText(out, redactVals))
 		}
 		fmt.Println("✔ postgres, redis y neo4j healthy")
 		// 9. restaurar los datos del snapshot en las BD vacías y verificar manifest
@@ -338,9 +338,9 @@ var upCmd = &cobra.Command{
 		}
 		// 10. api, celery, app
 		fmt.Println("· levantando api, celery y app...")
-		if out, err := dock.Compose(env, runDir, "up", "-d", "--wait", "api", "celery", "app"); err != nil {
+		if out, err := dock.StackUp(env, runDir, "api", "celery", "app"); err != nil {
 			dumpContainerLogs(env, runDir, []string{"flowsint-desk-api", "flowsint-desk-celery", "flowsint-desk-app"}, 150)
-			return fmt.Errorf("compose up (app): %v\n%s", err, redactText(out, redactVals))
+			return fmt.Errorf("arranque de Flowsint: %s\n%s", redactText(err.Error(), redactVals), redactText(out, redactVals))
 		}
 		// 11. sesión
 		sess.Phase = session.PhaseReady
@@ -491,8 +491,8 @@ func teardown(runDir string, env []string) {
 	stack := filepath.Join(runDir, "stack", "compose.yml")
 	if dock.Alive(env) {
 		if fileExists(stack) && fileExists(filepath.Join(runDir, "compose.env")) {
-			if out, err := dock.Compose(env, runDir, "down", "--remove-orphans"); err != nil {
-				fmt.Fprintln(os.Stderr, "aviso: compose down:", err, strings.TrimSpace(redactText(out, redactValues(runDir))))
+			if out, err := dock.StackDown(env, runDir); err != nil {
+				fmt.Fprintln(os.Stderr, "aviso: parando los contenedores:", err, strings.TrimSpace(redactText(out, redactValues(runDir))))
 			}
 		}
 		if err := dock.WipeSubdirs(env, runDir, "dockerd-data", "dockerd-exec", "rk-state", "neo4j-import"); err != nil {
@@ -514,7 +514,7 @@ func teardown(runDir string, env []string) {
 		}
 		return
 	}
-	fmt.Println("✔ compose abajo, Docker rootless parado, directorio de ejecución borrado (nada en claro en disco)")
+	fmt.Println("✔ contenedores abajo, motor parado, directorio de ejecución borrado (nada en claro en disco)")
 }
 
 func init() {

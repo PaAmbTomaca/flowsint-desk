@@ -26,7 +26,7 @@ func Images(flowsintVersion string) []string {
 	if flowsintVersion == "" {
 		flowsintVersion = "latest"
 	}
-	return []string{
+	imgs := []string{
 		"alpine:3",
 		"postgres:15-alpine",
 		"redis:7-alpine",
@@ -34,6 +34,16 @@ func Images(flowsintVersion string) []string {
 		"ghcr.io/reconurge/flowsint-api:" + flowsintVersion,
 		"ghcr.io/reconurge/flowsint-app:" + flowsintVersion,
 	}
+	if !IsPodman() {
+		return imgs
+	}
+	// Podman: nombres completos, y sin alpine (no hace falta el contenedor
+	// auxiliar para borrar: se usa `podman unshare`)
+	out := make([]string, 0, len(imgs)-1)
+	for _, img := range imgs[1:] {
+		out = append(out, qualify(img))
+	}
+	return out
 }
 
 // WipeSubdirs borra subdirectorios de parent DENTRO del user-namespace del
@@ -42,6 +52,21 @@ func Images(flowsintVersion string) []string {
 // "Permiso denegado". El daemon debe estar vivo. Se hace en UNA sola ejecución:
 // borrar el data-root por partes corrompe el daemon vivo.
 func WipeSubdirs(env []string, parent string, subs ...string) error {
+	if IsPodman() {
+		// Podman: se borra desde dentro del user namespace del usuario, sin
+		// contenedor ni daemon (funciona también tras un kill -9).
+		if !safeRunDir(parent) {
+			return fmt.Errorf("REFUSO borrar fuera de un directorio de ejecución: %q", parent)
+		}
+		args := []string{"unshare", "rm", "-rf"}
+		for _, s := range append(subs, "podman-data") {
+			args = append(args, filepath.Join(parent, s))
+		}
+		if out, err := Run(env, "podman", args...); err != nil {
+			return fmt.Errorf("podman unshare rm en %s: %v: %s", parent, err, strings.TrimSpace(out))
+		}
+		return nil
+	}
 	args := []string{"rm", "-rf"}
 	for _, s := range subs {
 		args = append(args, "/wipe/"+s)
@@ -58,6 +83,9 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 
 // Env devuelve el entorno para invocar docker apuntando SOLO al rootless.
 func Env(runDir string) []string {
+	if IsPodman() {
+		return podmanEnv(runDir)
+	}
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".local", "bin") + string(os.PathListSeparator) + os.Getenv("PATH")
 	env := []string{
@@ -76,7 +104,7 @@ func Env(runDir string) []string {
 
 // Run ejecuta un comando con el entorno rootless y devuelve stdout+stderr.
 func Run(env []string, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(bin(name), args...)
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -86,7 +114,7 @@ func Run(env []string, name string, args ...string) (string, error) {
 // salidas que se parsean (recuentos): un aviso por stderr no debe colarse
 // entre los datos.
 func Output(env []string, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(bin(name), args...)
 	cmd.Env = env
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
@@ -105,7 +133,7 @@ func RunToFile(env []string, path string, name string, args ...string) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(bin(name), args...)
 	cmd.Env = env
 	var se bytes.Buffer
 	cmd.Stdout = f
@@ -142,7 +170,7 @@ func CP(env []string, args ...string) error {
 
 // ExecStdin ejecuta un comando con stdin tomado de r (p. ej. psql < dump.sql).
 func ExecStdin(env []string, r *os.File, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(bin(name), args...)
 	cmd.Env = env
 	cmd.Stdin = r
 	out, err := cmd.CombinedOutput()
@@ -154,7 +182,7 @@ func ExecStdin(env []string, r *os.File, name string, args ...string) error {
 
 // RunDir igual que Run pero con cmd.Dir fijado.
 func RunDir(env []string, dir, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(bin(name), args...)
 	cmd.Env = env
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -163,6 +191,11 @@ func RunDir(env []string, dir, name string, args ...string) (string, error) {
 
 // Alive comprueba si el daemon rootless responde en el socket de la sesión.
 func Alive(env []string) bool {
+	if IsPodman() {
+		// sin daemon: "vivo" = el almacén de la sesión es utilizable
+		out, err := Run(env, "podman", "info", "--format", "{{.Store.GraphRoot}}")
+		return err == nil && strings.TrimSpace(out) != ""
+	}
 	out, err := Run(env, "docker", "version", "--format", "{{.Server.Version}}")
 	return err == nil && strings.TrimSpace(out) != ""
 }
@@ -170,6 +203,9 @@ func Alive(env []string) bool {
 // StartDaemon arranca dockerd rootless (vía dockerd-rootless.sh) con todo el
 // estado dentro del directorio de ejecución (tmpfs). Si ya está vivo, no hace nada.
 func StartDaemon(runDir string) error {
+	if IsPodman() {
+		return startPodmanService(runDir)
+	}
 	env := Env(runDir)
 	if Alive(env) {
 		return nil
@@ -423,9 +459,14 @@ func ImageDigests(env []string, cacheDir string, images []string) map[string]str
 // locales (have) y devuelve las imágenes que difieren. Solo cuenta cuando
 // ambos lados conocen el digest.
 func Drift(want, have map[string]string) []string {
+	// la misma imagen se llama distinto según el motor (con o sin docker.io/)
+	h := map[string]string{}
+	for img, d := range have {
+		h[normalize(img)] = d
+	}
 	var out []string
 	for img, w := range want {
-		if h := have[img]; w != "" && h != "" && digestOf(w) != digestOf(h) {
+		if d := h[normalize(img)]; w != "" && d != "" && digestOf(w) != digestOf(d) {
 			out = append(out, img)
 		}
 	}
