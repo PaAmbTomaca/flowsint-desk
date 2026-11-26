@@ -97,15 +97,9 @@ ofrece recordarla en el llavero. Los datos se recuperan con "up".`,
 		if err := os.WriteFile(passFile, []byte(pass), 0o600); err != nil {
 			return err
 		}
-		// restic-pass es solo para este proceso; y si init no termina bien,
-		// tampoco se queda la copia `passphrase` en tmpfs
-		terminado := false
-		defer func() {
-			_ = os.Remove(passFile)
-			if !terminado {
-				_ = os.Remove(filepath.Join(runDir, "passphrase"))
-			}
-		}()
+		// restic-pass es solo para este proceso: no sobrevive a init, acabe
+		// bien o mal (la copia `passphrase` solo se escribe al final, si todo fue bien)
+		defer os.Remove(passFile)
 
 		if existente {
 			if _, err := store.Exists(se); err != nil {
@@ -124,7 +118,6 @@ ofrece recordarla en el llavero. Los datos se recuperan con "up".`,
 				if err := finishInit(runDir, pass); err != nil {
 					return err
 				}
-				terminado = true
 				fmt.Println("✔ equipo conectado al almacén existente (no se ha creado ni modificado nada en él). Siguiente paso: `flowsint-desk up`")
 				return nil
 			}
@@ -188,7 +181,6 @@ ofrece recordarla en el llavero. Los datos se recuperan con "up".`,
 		if err := finishInit(runDir, pass); err != nil {
 			return err
 		}
-		terminado = true
 		fmt.Println("✔ init listo. Siguiente paso: `flowsint-desk up`")
 		return nil
 	},
