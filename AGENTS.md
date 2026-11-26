@@ -1,6 +1,6 @@
 # AGENTS.md — flowsint-desk
 
-CLI en Go (`flowsint-desk`) que levanta Flowsint en Docker rootless, efímero en tmpfs,
+CLI en Go (`flowsint-desk`) que levanta Flowsint en contenedores rootless (Docker o Podman), efímero en tmpfs,
 con snapshots cifrados (restic) en pCloud. La especificación completa está en
 `ENCARGO.md`; el manual de uso en `README.md`. `flowsint/` es la referencia upstream de
 **solo lectura** (tiene `.git`: no lo toques con ninguna operación git).
@@ -33,7 +33,7 @@ con snapshots cifrados (restic) en pCloud. La especificación completa está en
 ## Estructura
 
 - `main.go` → `internal/cli` (cobra: setup, doctor, init, up, down, status, backup, snapshots, verify, selftest,
-  images, unlock, forget, passwd, logs, version)
+  images, engine, unlock, forget, passwd, logs, version)
 - `internal/{config,passphrase,run,secrets,dock,session,store,snap,lock,sockproxy}`
 - `assets/`: `compose.yml` embebido (se escribe en el run dir en cada `up`) y
   `assets/migrations/*.cypher` (migraciones Neo4j idempotentes, re-aplicadas tras restore)
@@ -142,6 +142,20 @@ si no, se pide por terminal. Puerto por defecto 5273 (configurable en config.tom
   (`internal/cli/distro.go`). No escribir `pacman`/`apt` a mano en mensajes.
 - **Apagado**: `watchShutdown()` (D-Bus, `PrepareForShutdown`) encola el cierre en el
   bucle de sesión; el inhibidor se suelta siempre, también si el snapshot falla.
+
+- **Dos motores** (`engine` en config.toml; ADR 0008, en inglés). El código pide siempre
+  `"docker"` a `dock.Run/Output/...`; con Podman se ejecuta `podman`. Lo que difiere vive
+  SOLO en `internal/dock/engine.go` y `stack.go`. `podmanSpec()` es la traducción a mano
+  de `assets/compose.yml`: **si tocas uno, toca el otro**.
+- Podman, medido en real (CI): (1) logs y eventos a fichero, nunca journald (acabarían en
+  disco); (2) el overlay hay que desmontarlo dentro de `podman unshare` antes de borrar;
+  (3) `XDG_RUNTIME_DIR` debe ser el REAL: con uno propio aardvark-dns no arranca y no hay
+  DNS entre contenedores; (4) el proceso pause (`catatonit -P`) es uno por usuario,
+  compartido con su Podman personal: solo se mata si no queda ningún `conmon` suyo;
+  (5) nombres de imagen completos (`docker.io/library/...`); (6) jamás `podman system
+  reset`/`migrate` ni sugerir el paquete `podman-docker`.
+- `ci/e2e.sh` es la prueba real de punta a punta con ambos motores: si cambias arranque,
+  cierre o snapshots, es lo que tiene que seguir en verde (además del simulacro).
 
 ## Entorno ya preparado en esta máquina (sin sudo)
 

@@ -14,7 +14,9 @@ Flowsint (OSINT de grafos) en tu PC de escritorio, **efímero y cifrado**:
   de Postgres/Neo4j y el vault de claves de API).
 - **Sin modificar Flowsint**: usa las imágenes oficiales tal cual; todo se configura
   desde fuera (compose embebido en el binario).
-- **Sin sudo**: Docker rootless, con su propio daemon por sesión, data-root en tmpfs.
+- **Sin sudo**: contenedores rootless con todo el estado en tmpfs. Dos motores a
+  elegir por equipo: **Docker rootless** (daemon propio por sesión) o **Podman
+  rootless** (sin daemon).
 - Solo se publica `127.0.0.1:5273`. Ni la API, ni Neo4j, ni Postgres, ni Redis salen
   de loopback. Redis va sin persistencia (`--save "" --appendonly no`).
 
@@ -130,6 +132,7 @@ flowsint-desk verify [ID]                     # ¿la copia está entera? restic 
 flowsint-desk selftest                        # prueba de humo: ciclo completo real con un almacén desechable
 flowsint-desk images [pull|update|sync]       # imágenes de este equipo vs. las del último snapshot; sync las iguala por digest
 flowsint-desk unlock --restic                 # quitar bloqueos huérfanos de restic (tras un kill -9 en mitad de un backup)
+flowsint-desk engine [docker|podman]          # ver el motor de contenedores de este equipo, o cambiarlo
 flowsint-desk version
 flowsint-desk logs [--tail N] [filtro]        # logs de los contenedores de la sesión viva, saneados (secretos → ***)
 ```
@@ -153,6 +156,26 @@ tiempo o pCloud ya se ha ido, vale el último snapshot automático.
 
 Un arranque que falla o que cancelas con Ctrl+C se desmonta entero (daemon,
 contenedores, secretos y volcados restaurados): no queda nada descifrado en RAM.
+
+## Motor de contenedores: Docker o Podman
+
+`setup` te hace elegir la primera vez. Los dos son rootless y dan las mismas
+garantías; cambia cuántas piezas hay y cómo se limpia.
+
+| | Docker rootless | Podman rootless |
+|---|---|---|
+| Qué instala | docker, compose, rootlesskit, slirp4netns, fuse-overlayfs y un script | un paquete (`podman`) más `aardvark-dns` y `passt` |
+| Cómo arranca Flowsint | `docker compose` | la CLI lanza los contenedores ella misma |
+| Daemon | uno por sesión, del que dependen los contenedores | ninguno (solo un socket para los enrichers) |
+| Limpieza al cerrar | contenedor auxiliar dentro del user namespace | `podman unshare`, funciona aunque todo haya muerto |
+| Roce con el Docker del sistema | ninguno si se respeta `DOCKER_HOST` | ninguno por construcción |
+
+Las imágenes son las mismas (formato estándar OCI) y un almacén creado con un
+motor se restaura con el otro. **Cambiar de motor después no es un ajuste en
+caliente**: `flowsint-desk engine <otro>` exige sesión cerrada, borra la caché de
+imágenes y te manda repetir `setup`. Tus datos no se tocan. El porqué, en
+[`docs/decisions/0008-two-container-engines.md`](docs/decisions/0008-two-container-engines.md)
+(en inglés).
 
 ## Qué hay en un snapshot (cifrado por restic, solo en pCloud)
 
@@ -228,6 +251,7 @@ save_interval_min = 10
 keep_hourly = 24
 keep_daily = 30
 keep_monthly = 12
+engine = "docker"              # motor de contenedores: "docker" | "podman" (se elige en setup; cambiar: flowsint-desk engine)
 docker_socket = "filtrado"     # socket de Docker que ve Flowsint: "filtrado" | "directo" | "no"
 flowsint_version = "latest"    # etiqueta de las imágenes de Flowsint; fíjala (p. ej. "1.2.10") para no cambiar de versión sin querer
 ```
@@ -252,6 +276,8 @@ go vet ./...
 go test ./...     # sin Docker ni restic: lógica de bloqueo, snapshots, config, saneado...
 ```
 
-Los tests unitarios no levantan nada; la batería de aceptación real (sección 7
-de `ENCARGO.md`) sigue siendo manual, contra Docker rootless y un almacén de
-prueba. CI (`.github/workflows/ci.yml`) ejecuta build + vet + test en cada push.
+CI (`.github/workflows/ci.yml`) ejecuta en cada push: build + vet + test; la
+comprobación de requisitos en contenedores de Arch, Debian 13 y Fedora; y el
+**ciclo completo real** (`setup` + prueba de humo con Flowsint y restic
+auténticos) con los dos motores. Lo que el CI no puede cubrir —pCloud, llavero,
+apagado del equipo, enrichers— se prueba en la máquina con `selftest`.

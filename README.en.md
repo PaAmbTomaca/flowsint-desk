@@ -131,6 +131,7 @@ flowsint-desk verify [ID]                     # is the backup intact? restic che
 flowsint-desk selftest                        # smoke test: a real full cycle with a throwaway vault
 flowsint-desk images [pull|update|sync]       # this machine's images vs. the last snapshot's; sync matches them by digest
 flowsint-desk unlock --restic                 # remove stale restic locks (after a kill -9 in the middle of a backup)
+flowsint-desk engine [docker|podman]          # show this machine's container engine, or switch it
 flowsint-desk version
 flowsint-desk logs [--tail N] [filter]        # logs of the live session's containers, sanitized (secrets → ***)
 ```
@@ -154,6 +155,25 @@ there is no time or pCloud is already gone, the last automatic snapshot stands.
 
 A startup that fails or that you cancel with Ctrl+C is torn down completely
 (daemon, containers, restored secrets and dumps): nothing decrypted stays in RAM.
+
+## Container engine: Docker or Podman
+
+`setup` asks once. Both are rootless and give the same guarantees; what changes
+is the number of moving parts and how cleanup works.
+
+| | Rootless Docker | Rootless Podman |
+|---|---|---|
+| What gets installed | docker, compose, rootlesskit, slirp4netns, fuse-overlayfs and a script | one package (`podman`) plus `aardvark-dns` and `passt` |
+| How Flowsint starts | `docker compose` | the CLI launches the containers itself |
+| Daemon | one per session; containers depend on it | none (only a socket for the enrichers) |
+| Cleanup on exit | helper container inside the user namespace | `podman unshare`, works even after a crash |
+| Interference with the system Docker | none as long as `DOCKER_HOST` is respected | none by construction |
+
+Images are the same (standard OCI format) and a vault created with one engine
+restores with the other. **Switching engines later is not a live toggle**:
+`flowsint-desk engine <other>` requires a closed session, deletes the image
+cache and sends you back through `setup`. Your data is untouched. Rationale:
+[`docs/decisions/0008-two-container-engines.md`](docs/decisions/0008-two-container-engines.md).
 
 ## What a snapshot contains (encrypted by restic, only in pCloud)
 
@@ -232,6 +252,7 @@ save_interval_min = 10
 keep_hourly = 24
 keep_daily = 30
 keep_monthly = 12
+engine = "docker"              # container engine: "docker" | "podman" (chosen in setup; switch with: flowsint-desk engine)
 docker_socket = "filtrado"     # Docker socket Flowsint sees: "filtrado" (filtered) | "directo" (raw) | "no"
 flowsint_version = "latest"    # Flowsint image tag; pin it (e.g. "1.2.10") so the version never changes by accident
 ```
@@ -256,6 +277,8 @@ go vet ./...
 go test ./...     # no Docker or restic needed: lock, snapshot, config, redaction logic...
 ```
 
-Unit tests start nothing; the real acceptance battery (section 7 of
-`ENCARGO.md`) is still manual, against rootless Docker and a test vault.
-CI (`.github/workflows/ci.yml`) runs build + vet + test on every push.
+CI (`.github/workflows/ci.yml`) runs on every push: build + vet + test; the
+requirements check inside Arch, Debian 13 and Fedora containers; and the **real
+full cycle** (`setup` + smoke test with genuine Flowsint and restic) with both
+engines. What CI cannot cover — pCloud, keyring, system shutdown, enrichers —
+is tested on the machine with `selftest`.
