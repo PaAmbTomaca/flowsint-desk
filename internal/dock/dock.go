@@ -64,7 +64,7 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 		// mantiene su user namespace; `podman unshare` lo crea si no existe):
 		// hay que matarlo al final o se queda vivo para siempre.
 		args := []string{"unshare", "sh", "-c",
-			`cat "$0/podman-data/tmp/pause.pid" 2>/dev/null; echo; umount -l "$0/podman-data/root/overlay" 2>/dev/null; rm -rf "$@" >&2`, parent}
+			`cat "$0/podman-data/xdg/libpod/tmp/pause.pid" 2>/dev/null; echo; umount -l "$0/podman-data/root/overlay" 2>/dev/null; rm -rf "$@" >&2`, parent}
 		var dirs []string
 		for _, s := range append(subs, "podman-data") {
 			dirs = append(dirs, filepath.Join(parent, s))
@@ -105,7 +105,7 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 // killPause mata el proceso pause de Podman cuyo pid se leyó del pause.pid de
 // la sesión. Solo si de verdad es un pause (catatonit o podman): nunca se
 // mata un pid a ciegas, y nunca el pause del Podman personal del usuario, que
-// tiene otro pidfile.
+// vive en el XDG_RUNTIME_DIR real del usuario y no en el de la sesión.
 func killPause(pidStr string) {
 	var pid int
 	if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 1 {
