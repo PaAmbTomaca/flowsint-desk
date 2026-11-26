@@ -145,14 +145,34 @@ nothing else needs them.
 
 ## Validation status
 
-- Unit tests and the local simulation cover the engine-neutral logic.
-- The CI `e2e` job runs the full wizard (requirements, new vault, images, smoke
-  test) against real containers for each engine. See the workflow run for the
-  current result; this record does not claim more than CI shows.
-- Not yet exercised anywhere: an enricher launching a sibling container through
-  the proxy on Podman; SELinux enforcing on Fedora; a real desktop session on
-  the owner's two machines. `flowsint-desk selftest` is the first thing to run
-  there.
+**Validated against real software** (CI job `e2e`, GitHub runner, Ubuntu,
+Podman 5.7 and Docker rootless, real Flowsint images and real restic): the full
+`setup` wizard on a fresh machine, including the smoke test — create an
+encrypted vault, start Flowsint, register a user through the API, snapshot,
+shut down, start again restoring the snapshot, log in with the same user, shut
+down. The job also asserts that afterwards nothing is left in `/tmp` and **no
+engine process is alive**. Both engines pass.
+
+Running it for real found, and fixed, things the simulation could not:
+
+- Podman's overlay store stays mounted inside the rootless mount namespace, so
+  deleting it failed with "resource busy" until it is unmounted first.
+- Podman leaves its *pause* process (`catatonit -P`) alive after everything
+  else is gone. It is **one per user, shared with the user's own Podman**, and
+  its pidfile lives in `$XDG_RUNTIME_DIR`, not in the engine's `tmp_dir`. We
+  kill it only when no other Podman container of the user is running.
+- Giving the session its own `XDG_RUNTIME_DIR` (to isolate that process) breaks
+  container DNS: netavark starts `aardvark-dns` through the systemd user
+  instance and finds it there. The real one must be used.
+
+**Not yet exercised anywhere:**
+
+- An enricher launching a sibling container through the filtering proxy, on
+  either engine.
+- Podman 6.x (Arch/CachyOS, Fedora 45) and Podman 5.4 (Debian 13): CI ran 5.7.
+- SELinux enforcing on Fedora.
+- A real desktop session on the owner's two machines, with pCloud and the
+  keyring. `flowsint-desk selftest` is the first thing to run there.
 
 ## References
 
