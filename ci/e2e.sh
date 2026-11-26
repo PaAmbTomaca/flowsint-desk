@@ -103,9 +103,11 @@ mv "$VAULT.off" "$VAULT"
 N=$(nsnaps)
 "$BIN" down </dev/null || fallo "down no cerró tras recuperar el almacén"
 wait "$UP" 2>/dev/null || true
-[ "$(nsnaps)" -gt "$N" ] || fallo "al recuperar el almacén no se guardó el snapshot final"
 sleep 3
-[ ! -e "$RUN" ] && [ -z "$(vivos)" ] || fallo "quedaron restos tras el cierre"
+[ ! -e "$RUN" ] || fallo "quedó el directorio de ejecución tras el cierre"
+[ -z "$(vivos)" ] || { vivos; fallo "quedaron procesos del motor tras el cierre"; }
+[ "$(nsnaps)" -gt "$N" ] || fallo "al recuperar el almacén no se guardó el snapshot final"
+[ ! -e "$RUN" ] || fallo "un comando de consulta (snapshots) dejó un directorio en /tmp"
 
 echo "== caso 5: segunda copia (mirror)"
 printf '%s\n' "$FRASE" | "$BIN" mirror --to "$HOME/mirror-e2e" || fallo "mirror falló"
