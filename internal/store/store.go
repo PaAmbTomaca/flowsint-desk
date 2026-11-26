@@ -317,3 +317,20 @@ func KeyRemove(e Env, id string) error {
 	}
 	return nil
 }
+
+// Check verifica la integridad estructural del repositorio (`restic check`).
+func Check(e Env) error {
+	stdout, stderr, err := run(e, "check")
+	if err != nil {
+		return fmt.Errorf("restic check: %v: %s %s", err, strings.TrimSpace(stderr), lastLines(stdout, 5))
+	}
+	return nil
+}
+
+func lastLines(s string, n int) string {
+	l := strings.Split(strings.TrimSpace(s), "\n")
+	if len(l) > n {
+		l = l[len(l)-n:]
+	}
+	return strings.Join(l, "\n")
+}

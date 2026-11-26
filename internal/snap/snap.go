@@ -320,34 +320,34 @@ func findFile(root, base string) (string, error) {
 	return found, nil
 }
 
-// RestoreInto restaura el snapshot `id` (ya descargado en restoreDir) dentro
-// de los contenedores db vivos, aplica las migraciones Neo4j y verifica el
-// manifest. Devuelve error si algo no cuadra (entonces NO se arranca la UI).
-func RestoreInto(dockerEnv []string, runDir, restoreDir string) error {
+// LoadAndVerify lee el manifest de un snapshot ya restaurado en restoreDir y
+// comprueba que los ficheros están completos e íntegros (sha256). No necesita
+// Docker: lo usan tanto el restore de `up` como `verify`.
+func LoadAndVerify(restoreDir string) (*Manifest, error) {
 	manifestPath, err := findFile(restoreDir, "manifest.json")
 	if err != nil {
-		return fmt.Errorf("sin manifest.json en el snapshot: %w", err)
+		return nil, fmt.Errorf("sin manifest.json en el snapshot: %w", err)
 	}
 	mb, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return fmt.Errorf("sin manifest.json en el snapshot: %w", err)
+		return nil, fmt.Errorf("sin manifest.json en el snapshot: %w", err)
 	}
 	var m Manifest
 	if err := json.Unmarshal(mb, &m); err != nil {
-		return fmt.Errorf("manifest corrupto: %w", err)
+		return nil, fmt.Errorf("manifest corrupto: %w", err)
 	}
 	// 1. verificar sha256 de los ficheros restaurados
 	for f, want := range m.SHA256 {
 		p, err := findFile(restoreDir, f)
 		if err != nil {
-			return fmt.Errorf("falta %s en el snapshot restaurado", f)
+			return nil, fmt.Errorf("falta %s en el snapshot restaurado", f)
 		}
 		got, err := sha256File(p)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if got != want {
-			return fmt.Errorf("VERIFICACIÓN FALLIDA: sha256 de %s no coincide con el manifest (snapshot corrupto)", f)
+			return nil, fmt.Errorf("VERIFICACIÓN FALLIDA: sha256 de %s no coincide con el manifest (snapshot corrupto)", f)
 		}
 	}
 	// un snapshot con datos DEBE traer los dos volcados, estén o no listados
@@ -356,10 +356,22 @@ func RestoreInto(dockerEnv []string, runDir, restoreDir string) error {
 	if m.Kind != "init" {
 		for _, f := range []string{"postgres.sql", "neo4j.cypher", "secrets.env"} {
 			if _, ok := m.SHA256[f]; !ok {
-				return fmt.Errorf("VERIFICACIÓN FALLIDA: el manifest no trae sha256 de %s (snapshot incompleto)", f)
+				return nil, fmt.Errorf("VERIFICACIÓN FALLIDA: el manifest no trae sha256 de %s (snapshot incompleto)", f)
 			}
 		}
 	}
+	return &m, nil
+}
+
+// RestoreInto restaura el snapshot `id` (ya descargado en restoreDir) dentro
+// de los contenedores db vivos, aplica las migraciones Neo4j y verifica el
+// manifest. Devuelve error si algo no cuadra (entonces NO se arranca la UI).
+func RestoreInto(dockerEnv []string, runDir, restoreDir string) error {
+	mp, err := LoadAndVerify(restoreDir)
+	if err != nil {
+		return err
+	}
+	m := *mp
 	// 2. restaurar Postgres (BD vacía recién creada) vía stdin, sin argv secreto
 	//    (un snapshot "init" no trae postgres.sql: se salta)
 	if pgPath, err := findFile(restoreDir, "postgres.sql"); err == nil {
