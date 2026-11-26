@@ -41,8 +41,11 @@ if [ "$RC" -ne 0 ]; then
   exit 1
 fi
 
-echo "== tras el asistente: nada corriendo y nada en claro en /tmp"
+echo "== tras el asistente: nada en claro en /tmp y ningún proceso del motor vivo"
 if ls -d /tmp/flowsint-desk-* 2>/dev/null; then echo "FALLO: quedan restos en /tmp"; exit 1; fi
-"$BIN" status </dev/null || true
+sleep 3
+VIVOS=$(ps -u "$(id -u)" -o pid=,args= | grep -E 'conmon|pasta|aardvark-dns|catatonit|podman|rootlesskit|dockerd|containerd|slirp4netns' | grep -v grep || true)
+if [ -n "$VIVOS" ]; then echo "FALLO: procesos del motor siguen vivos tras cerrar:"; echo "$VIVOS"; exit 1; fi
+echo "   ningún proceso del motor vivo"
 printf '%s\n' "$FRASE" | "$BIN" verify
 echo "== E2E OK con $ENGINE"
