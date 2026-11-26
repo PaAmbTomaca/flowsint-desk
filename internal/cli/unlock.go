@@ -9,19 +9,39 @@ import (
 
 	"flowsint-desk/internal/config"
 	"flowsint-desk/internal/lock"
+	"flowsint-desk/internal/run"
+	"flowsint-desk/internal/store"
 
 	"github.com/spf13/cobra"
 )
 
-var unlockForce bool
+var unlockForce, unlockRestic bool
 
 var unlockCmd = &cobra.Command{
 	Use:   "unlock",
-	Short: "Rompe un bloqueo caducado de otro host (--force con confirmación)",
+	Short: "Rompe un bloqueo caducado de otro equipo (--force), o los bloqueos huérfanos de restic (--restic)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
 			return err
+		}
+		if unlockRestic {
+			// bloqueos internos del repo restic que deja un kill -9 en mitad de
+			// un backup/forget; `restic unlock` solo quita los huérfanos
+			runDir, err := run.Ensure()
+			if err != nil {
+				return err
+			}
+			se, limpiar, err := openStore(cfg, runDir)
+			if err != nil {
+				return err
+			}
+			defer limpiar()
+			if err := store.Unlock(se); err != nil {
+				return err
+			}
+			fmt.Println("✔ bloqueos huérfanos de restic eliminados (los de procesos vivos no se tocan)")
+			return nil
 		}
 		l, err := lock.Read(cfg.VaultPath)
 		if err != nil {
@@ -56,4 +76,5 @@ var unlockCmd = &cobra.Command{
 
 func init() {
 	unlockCmd.Flags().BoolVar(&unlockForce, "force", false, "forzar aunque el latido no esté caducado")
+	unlockCmd.Flags().BoolVar(&unlockRestic, "restic", false, "quitar los bloqueos huérfanos del repositorio restic (tras un kill -9 en mitad de un backup)")
 }

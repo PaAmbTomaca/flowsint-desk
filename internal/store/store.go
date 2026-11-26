@@ -318,6 +318,17 @@ func KeyRemove(e Env, id string) error {
 	return nil
 }
 
+// Unlock quita los bloqueos HUÉRFANOS del repositorio restic (los que deja un
+// proceso muerto, p. ej. un kill -9 en mitad de un backup). No toca los de
+// procesos vivos: es la forma segura de `restic unlock`.
+func Unlock(e Env) error {
+	_, stderr, err := run(e, "unlock")
+	if err != nil {
+		return fmt.Errorf("restic unlock: %v: %s", err, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
 // Check verifica la integridad estructural del repositorio (`restic check`).
 func Check(e Env) error {
 	stdout, stderr, err := run(e, "check")
