@@ -92,7 +92,25 @@ func PromptTwice(minLen int) (string, error) {
 	if p1 != p2 {
 		return "", errors.New("las frases no coinciden")
 	}
+	if len(p1) < RecommendedLen {
+		fmt.Fprintf(os.Stderr, "aviso: frase de %d caracteres. Es la ÚNICA llave de todo el almacén (y pCloud guarda el repo): se recomiendan %d o más, p. ej. 5-6 palabras al azar. Puedes cambiarla luego con `flowsint-desk passwd`.\n", len(p1), RecommendedLen)
+	}
 	return p1, nil
+}
+
+// RecommendedLen es la longitud a partir de la cual no se avisa de frase
+// corta. El mínimo duro (MinLen) no se sube para no romper flujos existentes.
+const (
+	MinLen         = 8
+	RecommendedLen = 16
+)
+
+// ReadLine lee una línea de stdin por el lector compartido (para que los
+// prompts de texto y los de la frase no se roben datos entre sí cuando stdin
+// es un pipe).
+func ReadLine() string {
+	line, _ := stdinReader.ReadString('\n')
+	return strings.TrimSpace(line)
 }
 
 // Get devuelve la frase: primero del llavero; si no está, la pide por terminal.
@@ -100,7 +118,7 @@ func Get() (string, bool, error) {
 	if p, err := FromKeyring(); err == nil {
 		return p, true, nil
 	}
-	p, err := Prompt("Frase de paso", 8)
+	p, err := Prompt("Frase de paso", MinLen)
 	if err != nil {
 		return "", false, err
 	}
@@ -110,7 +128,6 @@ func Get() (string, bool, error) {
 // AskSaveKeyring pregunta si recordar la frase en el llavero.
 func AskSaveKeyring() (bool, error) {
 	fmt.Fprintf(os.Stderr, "¿Guardar la frase en el llavero del sistema (Secret Service)? [s/N]: ")
-	line, _ := stdinReader.ReadString('\n')
-	ans := strings.TrimSpace(line)
+	ans := ReadLine()
 	return ans == "s" || ans == "S" || ans == "sí" || ans == "si" || ans == "y" || ans == "Y", nil
 }
