@@ -245,7 +245,7 @@ var upCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			ce := map[string]string{"DESK_RUN": runDir, "DESK_PORT": fmt.Sprint(cfg.Port), "DESK_SOCK": enrichersSock}
+			ce := map[string]string{"DESK_RUN": runDir, "DESK_PORT": fmt.Sprint(cfg.Port), "DESK_SOCK": enrichersSock, "FLOWSINT_VERSION": cfg.FlowsintVersion}
 			for k, v := range sec {
 				ce[k] = v
 			}
@@ -292,10 +292,27 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := dock.EnsureImages(env, cacheDir, logf); err != nil {
+		images := dock.Images(cfg.FlowsintVersion)
+		if err := dock.EnsureImages(env, cacheDir, images, logf); err != nil {
 			return err
 		}
 		fmt.Println("✔ imágenes listas")
+		digests := dock.ImageDigests(env, cacheDir, images)
+		// ¿este equipo ejecuta las mismas imágenes que crearon el snapshot? Con
+		// etiquetas móviles (latest) torre y portátil pueden divergir, y la API
+		// migra el esquema al arrancar: una imagen más vieja restauraría un
+		// volcado de un esquema más nuevo.
+		if snapID != "" {
+			if m, err := snap.LoadAndVerify(restoreDir); err == nil {
+				if dif := dock.Drift(m.ImageDigests, digests); len(dif) > 0 {
+					fmt.Fprintf(os.Stderr, "⚠ este equipo NO ejecuta las mismas imágenes que crearon el snapshot (%s, host %s):\n", restored, m.Host)
+					for _, img := range dif {
+						fmt.Fprintln(os.Stderr, "    ·", img)
+					}
+					fmt.Fprintln(os.Stderr, "  Para igualarlas: cierra con `flowsint-desk down` y ejecuta `flowsint-desk images sync` (ver `flowsint-desk images`).")
+				}
+			}
+		}
 		// 7b. limpiar restos del proyecto en este daemon (fallos previos, kill -9):
 		//     volúmenes viejos (p. ej. auth.ini de Neo4j con otra contraseña) rompen el arranque
 		_, _ = dock.Compose(env, runDir, "down", "-v", "--remove-orphans")
@@ -355,7 +372,6 @@ var upCmd = &cobra.Command{
 		// 12. bucle de sesión: snapshot automático cada N min, SIGUSR1 = snapshot
 		//     inmediato, latido del bloqueo cada minuto, SIGINT/SIGTERM = snapshot
 		//     final y cierre ordenado.
-		digests, _ := dock.ImageDigests(env)
 		ultimoBueno := time.Now() // el estado recién restaurado ES el último snapshot
 		doSnapshot := func(kind string) error {
 			if !lock.Mine(cfg.VaultPath, host, os.Getpid()) {

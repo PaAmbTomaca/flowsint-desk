@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"flowsint-desk/internal/sockproxy"
@@ -26,7 +27,12 @@ type Config struct {
 	// "filtrado" (proxy que solo deja lanzar contenedores sin montajes ni
 	// privilegios), "directo" (el socket rootless tal cual) o "no".
 	DockerSocket string `toml:"docker_socket"`
+	// FlowsintVersion: etiqueta de las imágenes ghcr.io/reconurge/flowsint-*
+	// ("latest" o una versión concreta publicada por Flowsint).
+	FlowsintVersion string `toml:"flowsint_version"`
 }
+
+var validTag = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 
 func Default() *Config {
 	home, _ := os.UserHomeDir()
@@ -38,6 +44,7 @@ func Default() *Config {
 		KeepDaily:       30,
 		KeepMonthly:     12,
 		DockerSocket:    sockproxy.ModeFiltered,
+		FlowsintVersion: "latest",
 	}
 }
 
@@ -97,6 +104,9 @@ func (c *Config) Validate() error {
 	}
 	if c.SaveIntervalMin < 1 {
 		return fmt.Errorf("save_interval_min = %d no vale: mínimo 1 minuto", c.SaveIntervalMin)
+	}
+	if !validTag.MatchString(c.FlowsintVersion) {
+		return fmt.Errorf("flowsint_version = %q no vale: debe ser una etiqueta de imagen (p. ej. \"latest\" o \"1.2.10\")", c.FlowsintVersion)
 	}
 	if !sockproxy.ValidMode(c.DockerSocket) {
 		return fmt.Errorf("docker_socket = %q no vale: usa \"filtrado\", \"directo\" o \"no\"", c.DockerSocket)

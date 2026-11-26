@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -18,15 +19,21 @@ import (
 	"flowsint-desk/internal/run"
 )
 
-// Images son las imágenes oficiales de Flowsint y sus dependencias.
+// Images devuelve las imágenes del stack para una versión de Flowsint (la
+// etiqueta de ghcr.io/reconurge/flowsint-{api,app}: "latest" o p. ej. "1.2.10").
 // alpine:3 se usa solo para limpiar el data-root desde dentro del user-ns.
-var Images = []string{
-	"alpine:3",
-	"postgres:15-alpine",
-	"redis:7-alpine",
-	"neo4j:5",
-	"ghcr.io/reconurge/flowsint-api:latest",
-	"ghcr.io/reconurge/flowsint-app:latest",
+func Images(flowsintVersion string) []string {
+	if flowsintVersion == "" {
+		flowsintVersion = "latest"
+	}
+	return []string{
+		"alpine:3",
+		"postgres:15-alpine",
+		"redis:7-alpine",
+		"neo4j:5",
+		"ghcr.io/reconurge/flowsint-api:" + flowsintVersion,
+		"ghcr.io/reconurge/flowsint-app:" + flowsintVersion,
+	}
 }
 
 // WipeSubdirs borra subdirectorios de parent DENTRO del user-namespace del
@@ -302,17 +309,47 @@ func cacheFile(cacheDir, image string) string {
 	return filepath.Join(cacheDir, name+".tar")
 }
 
+func digestFile(cacheDir, image string) string { return cacheFile(cacheDir, image) + ".digest" }
+
+// repoDigest devuelve el primer RepoDigest ("repo@sha256:…") de una imagen
+// presente en el daemon, o "".
+func repoDigest(env []string, img string) string {
+	out, err := Output(env, "docker", "image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", img)
+	if err != nil {
+		return ""
+	}
+	if f := strings.Fields(out); len(f) > 0 {
+		return f[0]
+	}
+	return ""
+}
+
+// saveToCache guarda la imagen en la caché de disco junto con su digest.
+// `docker load` no conserva los RepoDigests, así que el digest con el que se
+// descargó se anota en un fichero aparte: es lo que permite saber (y fijar)
+// qué imagen exacta se está ejecutando.
+func saveToCache(env []string, cacheDir, img string) error {
+	tar := cacheFile(cacheDir, img)
+	if out, err := Run(env, "docker", "save", "-o", tar, img); err != nil {
+		return fmt.Errorf("docker save %s: %v: %s", img, err, out)
+	}
+	if d := repoDigest(env, img); d != "" {
+		return os.WriteFile(digestFile(cacheDir, img), []byte(d+"\n"), 0o600)
+	}
+	return nil
+}
+
 // EnsureImages asegura que las imágenes estén en el daemon rootless:
 // primero mira el daemon, luego la caché en disco (docker load), y si no,
-// hace pull y guarda el tar en la caché.
-func EnsureImages(env []string, cacheDir string, logf func(string, ...any)) error {
-	for _, img := range Images {
+// hace pull y guarda el tar (y su digest) en la caché.
+func EnsureImages(env []string, cacheDir string, images []string, logf func(string, ...any)) error {
+	for _, img := range images {
 		if _, err := Run(env, "docker", "image", "inspect", img); err == nil {
 			continue
 		}
 		tar := cacheFile(cacheDir, img)
 		if _, err := os.Stat(tar); err == nil {
-			logf("cargando %s desde la caché %s", img, tar)
+			logf("cargando %s desde la caché", img)
 			if out, err := Run(env, "docker", "load", "-i", tar); err != nil {
 				return fmt.Errorf("docker load %s: %v: %s", img, err, out)
 			}
@@ -322,24 +359,80 @@ func EnsureImages(env []string, cacheDir string, logf func(string, ...any)) erro
 		if out, err := Run(env, "docker", "pull", img); err != nil {
 			return fmt.Errorf("docker pull %s: %v: %s", img, err, out)
 		}
-		if out, err := Run(env, "docker", "save", "-o", tar, img); err != nil {
-			return fmt.Errorf("docker save %s: %v: %s", img, err, out)
+		if err := saveToCache(env, cacheDir, img); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// ImageDigests devuelve los RepoDigests de las imágenes (para el manifest).
-func ImageDigests(env []string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, img := range Images {
-		o, err := Run(env, "docker", "image", "inspect", "--format", "{{join .RepoDigests \"\\n\"}}", img)
-		if err != nil {
-			return nil, fmt.Errorf("docker inspect %s: %w", img, err)
-		}
-		out[img] = strings.TrimSpace(o)
+// PullExact descarga la imagen por su digest (ref = "repo@sha256:…"), la
+// etiqueta como img y la deja en la caché. Sirve para que un equipo ejecute
+// exactamente la misma imagen que otro.
+func PullExact(env []string, cacheDir, img, ref string) error {
+	if !strings.Contains(ref, "@sha256:") {
+		return fmt.Errorf("referencia sin digest: %q", ref)
 	}
-	return out, nil
+	if out, err := Run(env, "docker", "pull", ref); err != nil {
+		return fmt.Errorf("docker pull %s: %v: %s", ref, err, out)
+	}
+	if out, err := Run(env, "docker", "tag", ref, img); err != nil {
+		return fmt.Errorf("docker tag %s %s: %v: %s", ref, img, err, out)
+	}
+	return saveToCache(env, cacheDir, img)
+}
+
+// DropCache borra de la caché el tar y el digest de una imagen (para forzar
+// una descarga nueva).
+func DropCache(cacheDir, img string) {
+	_ = os.Remove(cacheFile(cacheDir, img))
+	_ = os.Remove(digestFile(cacheDir, img))
+}
+
+// CachedDigests devuelve el digest anotado en la caché para cada imagen
+// ("" si no se conoce: caché creada por una versión anterior). No necesita
+// daemon.
+func CachedDigests(cacheDir string, images []string) map[string]string {
+	out := map[string]string{}
+	for _, img := range images {
+		b, _ := os.ReadFile(digestFile(cacheDir, img))
+		out[img] = strings.TrimSpace(string(b))
+	}
+	return out
+}
+
+// ImageDigests devuelve el digest de cada imagen (para el manifest): el que
+// conoce el daemon o, si la imagen vino de la caché, el anotado al descargarla.
+func ImageDigests(env []string, cacheDir string, images []string) map[string]string {
+	out := CachedDigests(cacheDir, images)
+	for _, img := range images {
+		if d := repoDigest(env, img); d != "" {
+			out[img] = d
+		}
+	}
+	return out
+}
+
+// Drift compara los digests con los que se creó un snapshot (want) con los
+// locales (have) y devuelve las imágenes que difieren. Solo cuenta cuando
+// ambos lados conocen el digest.
+func Drift(want, have map[string]string) []string {
+	var out []string
+	for img, w := range want {
+		if h := have[img]; w != "" && h != "" && digestOf(w) != digestOf(h) {
+			out = append(out, img)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// digestOf se queda con "sha256:…" de "repo@sha256:…".
+func digestOf(ref string) string {
+	if i := strings.LastIndex(ref, "@"); i >= 0 {
+		return ref[i+1:]
+	}
+	return ref
 }
 
 // Compose ejecuta `docker compose` con el proyecto escrito en stackDir y el
