@@ -58,12 +58,24 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 		if !safeRunDir(parent) {
 			return fmt.Errorf("REFUSO borrar fuera de un directorio de ejecución: %q", parent)
 		}
-		args := []string{"unshare", "rm", "-rf"}
+		// El almacén overlay queda montado dentro del namespace de montaje
+		// rootless: sin desmontarlo antes, rm falla con "resource busy".
+		args := []string{"unshare", "sh", "-c",
+			`umount -l "$0/podman-data/root/overlay" 2>/dev/null; rm -rf "$@"`, parent}
+		var dirs []string
 		for _, s := range append(subs, "podman-data") {
-			args = append(args, filepath.Join(parent, s))
+			dirs = append(dirs, filepath.Join(parent, s))
 		}
-		if out, err := Run(env, "podman", args...); err != nil {
-			return fmt.Errorf("podman unshare rm en %s: %v: %s", parent, err, strings.TrimSpace(out))
+		out, err := Run(env, "podman", append(args, dirs...)...)
+		if err == nil {
+			return nil
+		}
+		// lo que cuenta es que no quede nada: si desde fuera ya se puede
+		// borrar el resto, el aviso de rm no es un fallo
+		for _, d := range dirs {
+			if os.RemoveAll(d) != nil {
+				return fmt.Errorf("podman unshare rm en %s: %v: %s", parent, err, strings.TrimSpace(out))
+			}
 		}
 		return nil
 	}

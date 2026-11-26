@@ -176,8 +176,17 @@ func StackDown(env []string, runDir string) (string, error) {
 	if !IsPodman() {
 		return Compose(env, runDir, "down", "--remove-orphans")
 	}
-	out, err := Run(env, "podman", "rm", "-fa", "-t", "5")
+	// Los datos ya están en el snapshot: no hace falta una parada elegante de
+	// las BD (Neo4j tarda más de lo que merece esperar). Se reintenta una vez
+	// y solo es un fallo si al final queda algún contenedor.
+	out, err := Run(env, "podman", "rm", "-fa", "-t", "2")
+	if err != nil {
+		out, err = Run(env, "podman", "rm", "-fa", "-t", "0")
+	}
 	_, _ = Run(env, "podman", "network", "rm", "-f", netName)
+	if quedan, e := Output(env, "podman", "ps", "-aq"); e == nil && strings.TrimSpace(quedan) == "" {
+		return "", nil
+	}
 	return out, err
 }
 
