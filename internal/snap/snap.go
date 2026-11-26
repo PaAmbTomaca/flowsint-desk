@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,38 +66,73 @@ func sha256File(p string) (string, error) {
 }
 
 // pgDump vuelca Postgres a staging/postgres.sql (texto plano, sin cifrar:
-// restic cifra después y la dedup lo agradece).
+// restic cifra después y la dedup lo agradece). Solo stdout va al fichero:
+// un aviso de pg_dump por stderr dentro del .sql lo haría irrestaurable
+// (psql con ON_ERROR_STOP) y no se descubriría hasta el día del restore.
 func pgDump(dockerEnv []string, staging string) error {
-	out, err := dock.Run(dockerEnv, "docker", "exec", "flowsint-desk-postgres",
-		"sh", "-c", `pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"`)
-	if err != nil {
-		return fmt.Errorf("pg_dump: %v: %.300s", err, out)
+	if err := dock.RunToFile(dockerEnv, filepath.Join(staging, "postgres.sql"),
+		"docker", "exec", "flowsint-desk-postgres",
+		"sh", "-c", `pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"`); err != nil {
+		return fmt.Errorf("pg_dump: %w", err)
 	}
-	return os.WriteFile(filepath.Join(staging, "postgres.sql"), []byte(out), 0o600)
+	return nil
 }
 
-// pgCounts devuelve filas por tabla principal.
+func psql(dockerEnv []string, query string) (string, error) {
+	return dock.Output(dockerEnv, "docker", "exec", "flowsint-desk-postgres",
+		"psql", "-U", "flowsint", "-d", "flowsint", "-t", "-A", "-F", "|", "-c", query)
+}
+
+// pgCounts devuelve filas por tabla principal. Solo cuenta las tablas de
+// pgTables que EXISTEN: las imágenes de Flowsint van por tag `latest` y una
+// migración upstream que renombre o quite una tabla no debe dejar al usuario
+// sin poder hacer snapshots.
 func pgCounts(dockerEnv []string) (map[string]int, error) {
+	out, err := psql(dockerEnv, "SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+	if err != nil {
+		return nil, fmt.Errorf("pgCounts (tablas): %w", err)
+	}
+	existe := map[string]bool{}
+	for _, t := range strings.Fields(out) {
+		existe[t] = true
+	}
 	var q strings.Builder
-	for i, t := range pgTables {
-		if i > 0 {
+	for _, t := range pgTables {
+		if !existe[t] {
+			continue
+		}
+		if q.Len() > 0 {
 			q.WriteString(" UNION ALL ")
 		}
 		fmt.Fprintf(&q, "SELECT '%s', count(*) FROM %s", t, t)
 	}
-	out, err := dock.Run(dockerEnv, "docker", "exec", "flowsint-desk-postgres",
-		"psql", "-U", "flowsint", "-d", "flowsint", "-t", "-A", "-F", "|", "-c", q.String())
-	if err != nil {
-		return nil, fmt.Errorf("pgCounts: %v: %.300s", err, out)
+	if q.Len() == 0 {
+		return map[string]int{}, nil
 	}
+	out, err = psql(dockerEnv, q.String())
+	if err != nil {
+		return nil, fmt.Errorf("pgCounts: %w", err)
+	}
+	return parsePGCounts(out)
+}
+
+// parsePGCounts interpreta líneas "tabla|n" (psql -t -A -F '|').
+func parsePGCounts(out string) (map[string]int, error) {
 	m := map[string]int{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		parts := strings.Split(line, "|")
-		if len(parts) == 2 {
-			var n int
-			fmt.Sscanf(parts[1], "%d", &n)
-			m[parts[0]] = n
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
+		name, num, ok := strings.Cut(line, "|")
+		if !ok {
+			return nil, fmt.Errorf("pgCounts: línea inesperada %q", line)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(num))
+		if err != nil {
+			return nil, fmt.Errorf("pgCounts: recuento ilegible en %q", line)
+		}
+		m[name] = n
 	}
 	return m, nil
 }
@@ -107,7 +143,7 @@ func neo4jShell(dockerEnv []string, cypher string, failFast bool) (string, error
 		`cypher-shell --format plain -u "${NEO4J_AUTH%%/*}" -p "${NEO4J_AUTH#*/}" ` +
 			map[bool]string{true: "--fail-fast ", false: ""}[failFast] +
 			fmt.Sprintf("%q", cypher)}
-	return dock.Run(dockerEnv, "docker", args...)
+	return dock.Output(dockerEnv, "docker", args...)
 }
 
 // neo4jExport exporta el grafo completo vía APOC (online) y lo copia a
@@ -147,7 +183,7 @@ func neo4jCounts(dockerEnv []string) (nodes, rels map[string]int, totalN, totalR
 	q := func(query string) ([]string, error) {
 		out, err := neo4jShell(dockerEnv, query, true)
 		if err != nil {
-			return nil, fmt.Errorf("neo4jCounts %q: %v: %.300s", query, err, out)
+			return nil, fmt.Errorf("neo4jCounts %q: %w", query, err)
 		}
 		var lines []string
 		for _, l := range strings.Split(out, "\n") {
@@ -314,6 +350,16 @@ func RestoreInto(dockerEnv []string, runDir, restoreDir string) error {
 			return fmt.Errorf("VERIFICACIÓN FALLIDA: sha256 de %s no coincide con el manifest (snapshot corrupto)", f)
 		}
 	}
+	// un snapshot con datos DEBE traer los dos volcados, estén o no listados
+	// en el manifest: si faltan, no se arranca una BD vacía haciéndola pasar
+	// por restaurada.
+	if m.Kind != "init" {
+		for _, f := range []string{"postgres.sql", "neo4j.cypher", "secrets.env"} {
+			if _, ok := m.SHA256[f]; !ok {
+				return fmt.Errorf("VERIFICACIÓN FALLIDA: el manifest no trae sha256 de %s (snapshot incompleto)", f)
+			}
+		}
+	}
 	// 2. restaurar Postgres (BD vacía recién creada) vía stdin, sin argv secreto
 	//    (un snapshot "init" no trae postgres.sql: se salta)
 	if pgPath, err := findFile(restoreDir, "postgres.sql"); err == nil {
@@ -374,8 +420,8 @@ func RestoreInto(dockerEnv []string, runDir, restoreDir string) error {
 		if err != nil {
 			return err
 		}
-		if !mapsEqual(pg, m.PGRows) {
-			return fmt.Errorf("VERIFICACIÓN FALLIDA: filas Postgres %v != manifest %v — NO se arranca la interfaz", pg, m.PGRows)
+		if dif := pgMismatch(m.PGRows, pg); dif != "" {
+			return fmt.Errorf("VERIFICACIÓN FALLIDA: filas Postgres no cuadran con el manifest (%s) — NO se arranca la interfaz", dif)
 		}
 		if !mapsEqual(nd, m.Neo4jNodes) || !mapsEqual(rl, m.Neo4jRels) || tn != m.Neo4jTotalN || tr != m.Neo4jTotalR {
 			return fmt.Errorf("VERIFICACIÓN FALLIDA: neo4j nodos=%v total=%d rels=%v total=%d != manifest %v/%d %v/%d — NO se arranca la interfaz",
@@ -395,6 +441,28 @@ func RestoreInto(dockerEnv []string, runDir, restoreDir string) error {
 		return err
 	}
 	return nil
+}
+
+// pgMismatch compara los recuentos del manifest con los restaurados: cada
+// tabla del manifest debe existir tras restaurar y tener las mismas filas.
+// Devuelve "" si cuadra, o la lista de diferencias.
+func pgMismatch(want, got map[string]int) string {
+	keys := make([]string, 0, len(want))
+	for k := range want {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var difs []string
+	for _, k := range keys {
+		g, ok := got[k]
+		switch {
+		case !ok:
+			difs = append(difs, fmt.Sprintf("%s: falta (manifest %d)", k, want[k]))
+		case g != want[k]:
+			difs = append(difs, fmt.Sprintf("%s: %d (manifest %d)", k, g, want[k]))
+		}
+	}
+	return strings.Join(difs, ", ")
 }
 
 func mapsEqual(a, b map[string]int) bool {

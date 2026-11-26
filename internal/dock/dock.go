@@ -6,6 +6,7 @@
 package dock
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -72,6 +73,47 @@ func Run(env []string, name string, args ...string) (string, error) {
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// Output ejecuta un comando y devuelve SOLO stdout; stderr va al error. Para
+// salidas que se parsean (recuentos): un aviso por stderr no debe colarse
+// entre los datos.
+func Output(env []string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Env = env
+	var so, se bytes.Buffer
+	cmd.Stdout = &so
+	cmd.Stderr = &se
+	if err := cmd.Run(); err != nil {
+		return so.String(), fmt.Errorf("%v: %.300s", err, strings.TrimSpace(se.String()))
+	}
+	return so.String(), nil
+}
+
+// RunToFile ejecuta un comando volcando SOLO stdout a path (0600), en
+// streaming (sin cargar el volcado en memoria). stderr va al error. Si el
+// comando falla, el fichero parcial se borra.
+func RunToFile(env []string, path string, name string, args ...string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(name, args...)
+	cmd.Env = env
+	var se bytes.Buffer
+	cmd.Stdout = f
+	cmd.Stderr = &se
+	runErr := cmd.Run()
+	closeErr := f.Close()
+	if runErr != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("%v: %.300s", runErr, strings.TrimSpace(se.String()))
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return closeErr
+	}
+	return nil
 }
 
 // Logs devuelve las últimas `tail` líneas de los logs de un contenedor
