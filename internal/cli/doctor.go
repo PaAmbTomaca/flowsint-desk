@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"flowsint-desk/internal/config"
+	"flowsint-desk/internal/dock"
 	"flowsint-desk/internal/lock"
 	"flowsint-desk/internal/passphrase"
 	"flowsint-desk/internal/run"
@@ -41,7 +42,9 @@ type doctorCheck struct {
 	// afterInit: lo resuelve el paso de almacén del asistente (`setup`/`init`),
 	// no un comando del sistema.
 	afterInit bool
-	auto      func() (string, error) // devuelve una nota opcional
+	// only: si no está vacío, el chequeo solo aplica a ese motor de contenedores.
+	only string
+	auto func() (string, error) // devuelve una nota opcional
 }
 
 var doctorCmd = &cobra.Command{
@@ -55,8 +58,11 @@ y crea la caché de imágenes y la configuración por defecto. Lo que requiera
 sudo (subuid/subgid, montar /tmp, sysctls) solo se imprime.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if doctorPackages {
-			c := allPackagesCmd(currentFamily())
+			c := allPackagesCmd(currentFamily(), dock.Engine())
 			if c == "" {
+				if dock.IsPodman() {
+					return fmt.Errorf("distribución no reconocida: instala con tu gestor de paquetes podman (≥ 5), aardvark-dns, passt, newuidmap/newgidmap y restic")
+				}
 				return fmt.Errorf("distribución no reconocida: instala con tu gestor de paquetes docker (con dockerd y compose v2), newuidmap/newgidmap, rootlesskit, slirp4netns, fuse-overlayfs y restic")
 			}
 			fmt.Println(c)
@@ -166,7 +172,7 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 	// Los binarios rootless solo se descargan solos en Arch (paquetes del
 	// mirror de Arch); en el resto se indica el paquete del sistema.
 	rootlessBin := func(bin string) *doctorCheck {
-		c := &doctorCheck{name: "binario " + bin, run: look(bin)}
+		c := &doctorCheck{name: "binario " + bin, run: look(bin), only: dock.EngineDocker}
 		if fam == famArch {
 			c.fix = "`flowsint-desk setup` lo descarga a ~/.local/bin (o: " + installHint(fam, bin) + ")"
 			c.auto = autoArchBin(bin)
@@ -176,14 +182,39 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 		return c
 	}
 
-	return []*doctorCheck{
-		// --- binarios rootless ---
+	todos := []*doctorCheck{
+		// --- binarios rootless (motor Docker) ---
 		rootlessBin("rootlesskit"),
 		rootlessBin("slirp4netns"),
 		rootlessBin("fuse-overlayfs"),
-		{name: "binario dockerd-rootless.sh", run: look("dockerd-rootless.sh"),
+		{name: "binario dockerd-rootless.sh", run: look("dockerd-rootless.sh"), only: dock.EngineDocker,
 			fix:  "`flowsint-desk setup` lo descarga a ~/.local/bin (es un script de moby, vale para cualquier distribución)",
 			auto: autoDockerdScript},
+		// --- motor Podman ---
+		{name: "motor: Podman ≥ 5 (rootless, sin daemon)", only: dock.EnginePodman,
+			run: func() (bool, string) {
+				out, err := exec.Command("podman", "--version").Output()
+				if err != nil {
+					return false, ""
+				}
+				maj, _, ok := parseVersion(dockerVersion(string(out)))
+				return ok && maj >= 5, strings.TrimSpace(string(out))
+			},
+			fix: installHint(fam, "podman") + " (NO instales «podman-docker»: suplanta el comando docker y rompería tu Docker)"},
+		{name: "binario pasta (red rootless de Podman)", only: dock.EnginePodman, run: look("pasta"), fix: installHint(fam, "pasta")},
+		{name: "aardvark-dns (los contenedores se encuentran por nombre)", only: dock.EnginePodman,
+			run: func() (bool, string) {
+				for _, p := range []string{"/usr/lib/podman/aardvark-dns", "/usr/libexec/podman/aardvark-dns", "/usr/lib64/podman/aardvark-dns", "/usr/local/libexec/podman/aardvark-dns"} {
+					if _, err := os.Stat(p); err == nil {
+						return true, p
+					}
+				}
+				if p, err := exec.LookPath("aardvark-dns"); err == nil {
+					return true, p
+				}
+				return false, ""
+			},
+			fix: installHint(fam, "aardvark") + " (sin él la API no encuentra a postgres/neo4j por nombre)"},
 		{name: "binario newuidmap", run: look("newuidmap"), fix: installHint(fam, "newuidmap")},
 		{name: "binario newgidmap", run: look("newgidmap"), fix: installHint(fam, "newuidmap")},
 
@@ -228,9 +259,9 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 			},
 			fix:  "`flowsint-desk setup` descarga el binario oficial (sha256 verificado) a ~/.local/bin; o: " + installHint(fam, "restic"),
 			auto: autoRestic},
-		{name: "binario docker", run: look("docker"),
+		{name: "binario docker", run: look("docker"), only: dock.EngineDocker,
 			fix: installHint(fam, "docker") + " (solo se usan el cliente, dockerd y compose; el daemon del sistema NO se toca)"},
-		{name: "docker compose v2",
+		{name: "docker compose v2", only: dock.EngineDocker,
 			run: func() (bool, string) {
 				out, err := exec.Command("docker", "compose", "version").CombinedOutput()
 				if err != nil {
@@ -405,7 +436,14 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 				return ok1 && ok2, fmt.Sprintf("ghcr.io=%v github.com=%v", ok1, ok2)
 			},
 			fix: "comprueba DNS, firewall y proxy (HTTPS_PROXY); se necesita para bajar imágenes de Flowsint y binarios con --fix"},
+	} // solo los chequeos del motor elegido (más los comunes)
+	var out []*doctorCheck
+	for _, c := range todos {
+		if c.only == "" || c.only == dock.Engine() {
+			out = append(out, c)
+		}
 	}
+	return out
 }
 
 // --- helpers de comprobación ---

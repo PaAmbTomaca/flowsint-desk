@@ -3,6 +3,8 @@ package cli
 import (
 	"reflect"
 	"testing"
+
+	"flowsint-desk/internal/dock"
 )
 
 func TestDistroFamily(t *testing.T) {
@@ -34,10 +36,13 @@ func TestInstallHint(t *testing.T) {
 	if got := installHint(famFedora, "newuidmap"); got != "sudo dnf install shadow-utils" {
 		t.Errorf("fedora newuidmap: %q", got)
 	}
-	if got := allPackagesCmd(famDebian); got != "sudo apt install docker.io docker-compose uidmap rootlesskit slirp4netns fuse-overlayfs restic" {
+	if got := allPackagesCmd(famDebian, dock.EnginePodman); got != "sudo apt install podman aardvark-dns passt uidmap restic" {
+		t.Errorf("allPackagesCmd debian/podman: %q", got)
+	}
+	if got := allPackagesCmd(famDebian, dock.EngineDocker); got != "sudo apt install docker.io docker-compose uidmap rootlesskit slirp4netns fuse-overlayfs restic" {
 		t.Errorf("allPackagesCmd debian: %q", got)
 	}
-	if got := allPackagesCmd(famOther); got != "" {
+	if got := allPackagesCmd(famOther, dock.EngineDocker); got != "" {
 		t.Errorf("familia desconocida no debe inventar comando: %q", got)
 	}
 	if got := installHint(famOther, "restic"); got == "" || got[:4] == "sudo" {

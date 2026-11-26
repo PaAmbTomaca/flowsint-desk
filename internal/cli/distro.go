@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"flowsint-desk/internal/dock"
 )
 
 // Familias de distribución que la CLI sabe guiar.
@@ -56,6 +58,11 @@ var pkgs = map[string]map[string]string{
 	"docker":         {famArch: "docker", famDebian: "docker.io", famFedora: "moby-engine"},
 	"compose":        {famArch: "docker-compose", famDebian: "docker-compose", famFedora: "docker-compose"},
 	"restic":         {famArch: "restic", famDebian: "restic", famFedora: "restic"},
+	// motor Podman (nunca «podman-docker»: suplanta /usr/bin/docker y entra en
+	// conflicto con el Docker del sistema)
+	"podman":   {famArch: "podman", famDebian: "podman", famFedora: "podman"},
+	"aardvark": {famArch: "aardvark-dns", famDebian: "aardvark-dns", famFedora: "aardvark-dns"},
+	"pasta":    {famArch: "passt", famDebian: "passt", famFedora: "passt"},
 }
 
 // installVerb: orden del gestor de paquetes de cada familia.
@@ -65,16 +72,22 @@ var installVerb = map[string]string{
 	famFedora: "sudo dnf install",
 }
 
+// enginePkgReqs: requisitos de paquetes del sistema de cada motor.
+var enginePkgReqs = map[string][]string{
+	dock.EngineDocker: {"docker", "compose", "newuidmap", "rootlesskit", "slirp4netns", "fuse-overlayfs", "restic"},
+	dock.EnginePodman: {"podman", "aardvark", "pasta", "newuidmap", "restic"},
+}
+
 // allPackagesCmd devuelve UNA línea que instala todos los paquetes del sistema
-// que necesita flowsint-desk en esa familia ("" si no se conoce la familia).
-func allPackagesCmd(fam string) string {
+// que necesita flowsint-desk con ese motor en esa familia ("" si no se conoce).
+func allPackagesCmd(fam, engine string) string {
 	verb := installVerb[fam]
 	if verb == "" {
 		return ""
 	}
 	seen := map[string]bool{}
 	var list []string
-	for _, req := range []string{"docker", "compose", "newuidmap", "rootlesskit", "slirp4netns", "fuse-overlayfs", "restic"} {
+	for _, req := range enginePkgReqs[engine] {
 		if p := pkgs[req][fam]; p != "" && !seen[p] {
 			seen[p] = true
 			list = append(list, p)
