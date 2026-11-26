@@ -57,11 +57,23 @@ sudo (subuid/subgid, montar /tmp, sysctls) solo se imprime.`,
 // runDoctor ejecuta todos los chequeos; con fix=true intenta arreglar
 // automáticamente los que no requieran sudo. Devuelve los que siguen en rojo.
 func runDoctor(fix bool) ([]*doctorCheck, error) {
-	cfg, _ := config.Load()
-	u, _ := user.Current()
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		// doctor tiene que poder diagnosticar una config rota, no morir con ella
+		fmt.Printf("✖ configuración inválida (%v)\n   → arreglar: corrige el fichero o bórralo para volver a los valores por defecto\n", cfgErr)
+		cfg = config.Default()
+		cfg.Path, _ = config.FilePath()
+	}
+	username := os.Getenv("USER")
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
 	fail := 0
+	if cfgErr != nil {
+		fail++
+	}
 	var pendientes []*doctorCheck
-	for _, c := range doctorChecks(cfg, u.Username) {
+	for _, c := range doctorChecks(cfg, username) {
 		ok, detail := c.run()
 		if ok {
 			printCheck("✔", c.name, detail)
