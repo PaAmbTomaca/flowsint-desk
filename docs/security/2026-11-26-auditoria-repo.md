@@ -47,43 +47,38 @@ promete cuando algo sale mal.
 Además: aviso al crear una frase de menos de 16 caracteres (M3 de la auditoría
 del 20/11), tests unitarios en 8 paquetes y CI con build + vet + test.
 
-## Pendiente (no tocado; por orden de riesgo)
+## Segunda tanda (mismo día): lo que quedaba abierto
 
-1. **Validar todo lo anterior en real** (ENCARGO §7, las 9 pruebas, más: cerrar
-   con pCloud desmontado, `init` en el segundo equipo, `forget --dry-run`).
-2. **A1 — imágenes por tag mutable** (`latest`, `15-alpine`, `neo4j:5`). No se
-   han fijado digests porque no se han podido verificar desde aquí y fijar un
-   digest sin comprobar es peor que no fijarlo. Efecto añadido que la auditoría
-   anterior no recogía: **torre y portátil pueden tener versiones distintas de
-   Flowsint** (cada una con su caché de `latest`); la API migra el esquema al
-   arrancar, y el equipo con la imagen vieja restauraría un volcado de esquema
-   más nuevo. Recomendado: fijar digests y guardar/comparar el id de imagen en
-   el manifest (hoy `image_digests` queda vacío cuando la imagen viene de la
-   caché `docker load`).
-3. **A2 — socket rootless en api/celery** (`:ro` no limita la API de Docker):
-   un RCE en Flowsint equivale a todo lo que el usuario puede leer. Sigue
-   pendiente el socket-proxy.
-4. **Apagado del equipo**: el `systemd-inhibit --mode=delay` lanzado como
-   `sleep infinity` no gana tiempo útil: logind espera `InhibitDelayMaxSec`
-   (5 s por defecto) y después llegan los SIGTERM a la vez a `up` y al cliente
-   de pCloud. Para un snapshot final fiable hay que escuchar
-   `PrepareForShutdown` por D-Bus y subir `InhibitDelayMaxSec` (root). Hoy, al
-   apagar, cuenta con el último snapshot automático (≤ 10 min).
-5. **M2 — `doctor --fix`**: los paquetes de Arch se instalan sin verificar
-   firma y con versión fija en el código (dejarán de existir en el mirror);
-   `dockerd-rootless.sh` se baja de la rama `master` de moby, sin fijar.
-6. **Bloqueos de restic huérfanos** tras un `kill -9` en mitad de un backup:
-   `forget`/`prune` pueden negarse hasta un `restic unlock`. No hay comando.
-7. `init` deja la frase en `<runDir>/passphrase` (tmpfs, 0600) hasta el primer
-   `up` o el reinicio. Es cómodo y está documentado, pero es la frase en claro
-   en RAM sin sesión abierta; valorar quitarlo si se usa el llavero.
-8. Endurecer el compose (`no-new-privileges`, `cap_drop`, red interna para las
-   BD). No se ha tocado porque no se puede probar aquí y romper un arranque
-   medido no compensa.
-9. Menores: `snapshots` hace dos llamadas a restic por snapshot (lento con
-   cientos); `up` guarda `config.toml` al aplicar la retención y pisa ediciones
-   hechas a mano durante la sesión; `Session.Alive()` solo mira el pid
-   (reutilización de pid tras un kill -9, improbable).
+Tras la primera entrega se cerró también lo pendiente de seguridad y se añadió
+lo que le faltaba a la CLI.
+
+| Tema | Qué se hizo | Estado real |
+|------|-------------|-------------|
+| **A2** socket de Docker en api/celery | Proxy filtrado (`internal/sockproxy`) montado por defecto: solo pull/inspect de imágenes y contenedores sin montajes, privilegios ni namespaces compartidos; solo se operan los contenedores creados por el proxy. Lista sacada del código de Flowsint (`dockertool.py`). Clave `docker_socket`. | Tests contra un daemon simulado con HTTP real (flujo de enricher pasa; 23 abusos denegados). ⚠ **Sin probar con los enrichers reales**: si alguno falla, `up` imprime la petición denegada. |
+| **A1** imágenes por etiqueta móvil | `flowsint_version` configurable; digest anotado al descargar y guardado en el manifest; aviso en `up` si este equipo ejecuta otras imágenes que el snapshot; `images sync` las iguala por digest. | No se fijan digests en el código (no verificables desde aquí): se fija por almacén. ⚠ Sin probar contra un registro real. |
+| **M2** descargas de `setup` | Firma de los paquetes de Arch verificada con `gpgv` y el llavero del sistema (sin ella no se instala); versión vigente consultada a archlinux.org; `dockerd-rootless.sh` del paquete del sistema o de la etiqueta de moby de la versión instalada; restic contra `SHA256SUMS`. | ⚠ Descargas no ejecutadas desde aquí (solo parsers probados). |
+| **M3** frase corta | Aviso por debajo de 16 caracteres al crearla. | Hecho. |
+| Apagado del equipo | `up` escucha `PrepareForShutdown` de logind y lanza el snapshot final al empezar el apagado; `doctor` comprueba `InhibitDelayMaxSec` y da los comandos para subirlo. | ⚠ Sin probar contra logind real. Con los 5 s de fábrica sigue sin dar tiempo: hay que subirlo. |
+| Bloqueos huérfanos de restic | `unlock --restic`. | Hecho. |
+| Frase en tmpfs tras `init` | Ya no se deja si se guardó en el llavero. | Hecho. |
+| Endurecer compose | `no-new-privileges` en los seis servicios. | ⚠ Sin probar con el stack real. `cap_drop` y red interna para las BD, no: riesgo de romper el arranque sin poder medirlo. |
+| Menores | `snapshots` con una llamada a restic por snapshot; `up` ya no pisa `config.toml`. | Hecho. |
+
+Añadido a la CLI: asistente `setup` de principio a fin (requisitos por
+distribución Debian/Arch, detección de pCloud, primer/segundo equipo, imágenes,
+prueba), `selftest`, `verify`, `images`, `version`.
+
+## Sigue pendiente
+
+1. **Validar en real**, por este orden: `flowsint-desk selftest`; la batería de
+   `ENCARGO.md` §7; un enricher (subfinder) con `docker_socket = "filtrado"`;
+   `forget` con `--dry-run` de restic; apagar el equipo con una sesión abierta.
+2. Los nombres de paquete de Debian que sugiere `doctor` (uidmap, rootlesskit,
+   slirp4netns, fuse-overlayfs, docker.io, docker-compose) no se han probado en
+   una Debian 13.
+3. `Session.Alive()` solo mira el pid (reutilización de pid tras un kill -9,
+   improbable).
+4. Podman como segundo backend: `docs/research/2026-11-26-podman-reanalisis.md`.
 
 ## Cómo reproducir las comprobaciones
 
@@ -91,7 +86,7 @@ del 20/11), tests unitarios en 8 paquetes y CI con build + vet + test.
 go build -o dist/flowsint-desk . && go vet ./... && go test ./...
 ```
 
-Escenarios del simulacro que pasaron (51 comprobaciones): init nuevo / init
+Escenarios del simulacro que pasaron (69 comprobaciones, incluidas las de la segunda tanda: `verify`, `images`, `selftest` y el asistente `setup` en primer y segundo equipo): init nuevo / init
 repetido / init con frase mala; `up` + `status` + `backup` + `snapshots` +
 `logs`; segundo `up` rechazado; cierre con snapshot final fallido (no se
 destruye) y cierre tras arreglarlo; segundo cierre dentro del plazo (cierra sin
