@@ -32,8 +32,9 @@ con snapshots cifrados (restic) en pCloud. La especificación completa está en
 
 ## Estructura
 
-- `main.go` → `internal/cli` (cobra: doctor, setup, init, up, down, status, backup, snapshots, unlock, forget, passwd, logs)
-- `internal/{config,passphrase,run,secrets,dock,session,store,snap,lock}`
+- `main.go` → `internal/cli` (cobra: setup, doctor, init, up, down, status, backup, snapshots, verify, selftest,
+  images, unlock, forget, passwd, logs, version)
+- `internal/{config,passphrase,run,secrets,dock,session,store,snap,lock,sockproxy}`
 - `assets/`: `compose.yml` embebido (se escribe en el run dir en cada `up`) y
   `assets/migrations/*.cypher` (migraciones Neo4j idempotentes, re-aplicadas tras restore)
 - `dist/`: binario compilado y `dist/vault-test` (almacén de pruebas)
@@ -122,6 +123,25 @@ si no, se pide por terminal. Puerto por defecto 5273 (configurable en config.tom
   `run.Private()` (directorio real, nuestro, 0700).
 - Capturar con stderr separado todo lo que se guarde o se parsee (`dock.RunToFile`,
   `dock.Output`): un aviso de `pg_dump` dentro del `.sql` lo hace irrestaurable.
+
+- **Socket de los enrichers**: api/celery montan `${DESK_SOCK}`, que por defecto es el
+  proxy filtrado de `internal/sockproxy` (`<runDir>/enrichers.sock`), no el socket real.
+  La lista permitida sale de `flowsint-enrichers/src/tools/dockertool.py` de Flowsint: si
+  upstream cambia cómo lanza contenedores, hay que ampliarla ahí (y en su test), no pasar
+  a `docker_socket = "directo"`.
+- **Imágenes**: `dock.Images(cfg.FlowsintVersion)`, nunca una lista fija. `docker load` no
+  conserva RepoDigests: el digest se anota en `<tar>.digest` al descargar
+  (`dock.saveToCache`) y de ahí va al manifest.
+- **Daemon temporal** (comandos `images`): `withDaemon()` + `stopTempDaemon()`, que borra
+  solo lo del daemon. `teardown()` borra TODO el directorio de ejecución: solo para
+  sesiones.
+- **selftest** lanza este mismo binario con `FLOWSINT_DESK_CONFIG_DIR` y
+  `FLOWSINT_DESK_NO_KEYRING=1`; su almacén va en `/tmp/flowsint-desk-selftest-*`, fuera
+  del directorio de ejecución (que cada `down` borra).
+- **Distribución**: los comandos de instalación salen de `installHint(fam, req)`
+  (`internal/cli/distro.go`). No escribir `pacman`/`apt` a mano en mensajes.
+- **Apagado**: `watchShutdown()` (D-Bus, `PrepareForShutdown`) encola el cierre en el
+  bucle de sesión; el inhibidor se suelta siempre, también si el snapshot falla.
 
 ## Entorno ya preparado en esta máquina (sin sudo)
 
