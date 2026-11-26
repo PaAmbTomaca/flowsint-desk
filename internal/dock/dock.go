@@ -64,7 +64,7 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 		// mantiene su user namespace; `podman unshare` lo crea si no existe):
 		// hay que matarlo al final o se queda vivo para siempre.
 		args := []string{"unshare", "sh", "-c",
-			`cat "$0/podman-data/xdg/libpod/tmp/pause.pid" 2>/dev/null; echo; umount -l "$0/podman-data/root/overlay" 2>/dev/null; rm -rf "$@" >&2`, parent}
+			`cat "${XDG_RUNTIME_DIR:-/nonexistent}/libpod/tmp/pause.pid" 2>/dev/null; echo; umount -l "$0/podman-data/root/overlay" 2>/dev/null; rm -rf "$@" >&2`, parent}
 		var dirs []string
 		for _, s := range append(subs, "podman-data") {
 			dirs = append(dirs, filepath.Join(parent, s))
@@ -74,7 +74,7 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 		var so, se bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &so, &se
 		err := cmd.Run()
-		killPause(strings.TrimSpace(so.String()))
+		killPauseIfUnused(strings.TrimSpace(so.String()))
 		out := se.String()
 		if err == nil {
 			return nil
@@ -102,11 +102,13 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 	return nil
 }
 
-// killPause mata el proceso pause de Podman cuyo pid se leyó del pause.pid de
-// la sesión. Solo si de verdad es un pause (catatonit o podman): nunca se
-// mata un pid a ciegas, y nunca el pause del Podman personal del usuario, que
-// vive en el XDG_RUNTIME_DIR real del usuario y no en el de la sesión.
-func killPause(pidStr string) {
+// killPauseIfUnused mata el proceso "pause" de Podman (el que mantiene el
+// user namespace rootless) para que al cerrar no quede ningún proceso vivo.
+// Ese proceso es UNO por usuario, compartido con el Podman personal: solo se
+// mata si no queda ningún otro contenedor Podman del usuario en marcha (ningún
+// conmon). Si quedan, se deja: es suyo. Podman lo vuelve a crear solo la
+// próxima vez que haga falta.
+func killPauseIfUnused(pidStr string) {
 	var pid int
 	if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 1 {
 		return
@@ -115,17 +117,52 @@ func killPause(pidStr string) {
 	if err != nil {
 		return
 	}
+	// nunca a ciegas: tiene que ser de verdad un pause
 	if c := strings.TrimSpace(string(comm)); c != "catatonit" && c != "podman" {
+		return
+	}
+	if otherContainersRunning() {
 		return
 	}
 	_ = syscall.Kill(pid, syscall.SIGTERM)
 	for i := 0; i < 20; i++ {
 		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err != nil {
-			return
+			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	_ = syscall.Kill(pid, syscall.SIGKILL)
+	if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" {
+		_ = os.Remove(filepath.Join(x, "libpod", "tmp", "pause.pid"))
+	}
+}
+
+// otherContainersRunning: queda algún conmon (un vigilante por contenedor
+// Podman) de este usuario. En caso de duda responde true (no se mata nada).
+func otherContainersRunning() bool {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return true
+	}
+	uid := uint32(os.Getuid())
+	for _, e := range entries {
+		var pid int
+		if _, err := fmt.Sscanf(e.Name(), "%d", &pid); err != nil {
+			continue
+		}
+		comm, err := os.ReadFile(filepath.Join("/proc", e.Name(), "comm"))
+		if err != nil || strings.TrimSpace(string(comm)) != "conmon" {
+			continue
+		}
+		fi, err := os.Stat(filepath.Join("/proc", e.Name()))
+		if err != nil {
+			continue
+		}
+		if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Uid == uid {
+			return true
+		}
+	}
+	return false
 }
 
 // Env devuelve el entorno para invocar docker apuntando SOLO al rootless.

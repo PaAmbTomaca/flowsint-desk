@@ -95,20 +95,13 @@ func podmanEnv(runDir string) []string {
 		"LOGNAME=" + os.Getenv("LOGNAME"),
 		"SHELL=" + os.Getenv("SHELL"),
 	}
-	// XDG_RUNTIME_DIR propio de la sesión: Podman guarda ahí (y no en tmp_dir)
-	// el pid de su proceso "pause" y el namespace de red rootless. Con el del
-	// usuario, nuestra sesión compartiría ese proceso con su Podman personal y
-	// no podríamos matarlo al cerrar sin afectar a sus otros contenedores.
-	xdg := filepath.Join(podmanDir(runDir), "xdg")
-	_ = os.MkdirAll(xdg, 0o700)
-	env = append(env, "XDG_RUNTIME_DIR="+xdg)
-	// el bus de sesión real (cgroups vía systemd de usuario) sigue accesible
-	// por su dirección explícita, o por la ruta estándar si no está en el entorno
-	if v := os.Getenv("DBUS_SESSION_BUS_ADDRESS"); v != "" {
-		env = append(env, "DBUS_SESSION_BUS_ADDRESS="+v)
-	} else if real := os.Getenv("XDG_RUNTIME_DIR"); real != "" {
-		if _, err := os.Stat(filepath.Join(real, "bus")); err == nil {
-			env = append(env, "DBUS_SESSION_BUS_ADDRESS=unix:path="+filepath.Join(real, "bus"))
+	// XDG_RUNTIME_DIR tiene que ser el REAL del usuario: netavark arranca
+	// aardvark-dns (el DNS entre contenedores) a través del systemd de usuario
+	// y lo localiza ahí. Consecuencia: el proceso "pause" de Podman es uno por
+	// usuario, compartido con su Podman personal (ver killPauseIfUnused).
+	for _, k := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
 		}
 	}
 	return env
