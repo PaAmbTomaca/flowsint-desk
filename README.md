@@ -43,12 +43,25 @@ escritorio efímera y cifrada por fuera, usando las imágenes oficiales tal cual
 
 ## Requisitos e instalación
 
-La vía rápida es **`flowsint-desk setup`** (equivalente a `doctor --fix`): instala
-automáticamente en `~/.local/bin` lo que no requiera sudo (restic verificado por
-sha256, rootlesskit, slirp4netns, fuse-overlayfs, `dockerd-rootless.sh`), crea la
-caché de imágenes y `config.toml`, y al final imprime **solo los pasos pendientes**
-que sí requieran sudo (normalmente una vez: `/etc/subuid` y `/etc/subgid`).
-La CLI nunca ejecuta sudo: los comandos pendientes se muestran para copiarlos.
+**Un solo comando deja el equipo listo: `flowsint-desk setup`.** Es un
+asistente que se puede repetir (lo que ya está bien, se salta):
+
+1. **Requisitos**: comprueba todo; instala en `~/.local/bin` lo que no necesita
+   sudo (restic con su sha256 oficial; en Arch/CachyOS, los binarios rootless
+   con la firma del paquete verificada) y, para lo que sí lo necesita, te da el
+   comando exacto de tu distribución (`apt` en Debian, `pacman` en Arch),
+   espera a que lo ejecutes y vuelve a comprobar.
+2. **Almacén**: localiza pCloud Drive, propone la ruta y distingue **primer
+   equipo** (crea el almacén) de **segundo equipo** (se conecta al que ya hay,
+   sin crear nada).
+3. **Imágenes**: las descarga a la caché; en un segundo equipo, las mismas (por
+   digest) que usó el equipo que guardó por última vez.
+4. **Prueba de humo** opcional (`selftest`): un ciclo completo real con un
+   almacén desechable, sin tocar tus datos.
+5. Arranque.
+
+La CLI nunca ejecuta sudo. `setup --yes` no pregunta; `setup --vault RUTA`
+indica el almacén a mano (si no usas pCloud Drive o no lo detecta).
 
 `flowsint-desk doctor` comprueba **todos** los requisitos y, si falta algo,
 imprime el paso exacto para arreglarlo (`→ arreglar: ...`). Con
@@ -92,6 +105,7 @@ paso de `sudo`, que siempre queda para ti.)
 ## Uso
 
 ```sh
+flowsint-desk setup                           # asistente: deja este equipo listo de principio a fin
 flowsint-desk doctor                          # todos los requisitos, con cómo arreglar cada uno
 flowsint-desk doctor --fix                    # arregla automáticamente lo que no requiera sudo
 flowsint-desk init --vault ~/pCloudDrive/flowsint-vault
@@ -112,6 +126,11 @@ flowsint-desk forget                          # retención (24 h cubiertas, 30 d
 #   (keep-hourly=N de restic = N horas cubiertas, 1 snapshot por hora, más el
 #    más antiguo de cada bucket; keep-daily/keep-monthly igual por día/mes)
 flowsint-desk passwd                          # cambiar la frase de paso
+flowsint-desk verify [ID]                     # ¿la copia está entera? restic check + sha256 del snapshot, sin abrir sesión
+flowsint-desk selftest                        # prueba de humo: ciclo completo real con un almacén desechable
+flowsint-desk images [pull|update|sync]       # imágenes de este equipo vs. las del último snapshot; sync las iguala por digest
+flowsint-desk unlock --restic                 # quitar bloqueos huérfanos de restic (tras un kill -9 en mitad de un backup)
+flowsint-desk version
 flowsint-desk logs [--tail N] [filtro]        # logs de los contenedores de la sesión viva, saneados (secretos → ***)
 ```
 
@@ -165,6 +184,20 @@ contenedores, secretos y volcados restaurados): no queda nada descifrado en RAM.
   (compose, restic, `docker logs`) se enmascaran los secretos y la frase (`***`);
   si falla el arranque, `up` vuelca automáticamente los logs de los contenedores
   implicados ya saneados, y `flowsint-desk logs` los muestra en vivo.
+- **Socket de Docker filtrado**: Flowsint necesita un socket de Docker para sus
+  enrichers (subfinder, httpx...). No ve el real, sino un proxy de la CLI que
+  solo deja descargar imágenes y lanzar contenedores **sin montajes, sin
+  privilegios y sin compartir red** con otros contenedores, y que no deja
+  inspeccionar los de las bases de datos. Así un fallo en Flowsint no llega a tu
+  home. `docker_socket = "directo"` restaura el socket sin filtrar (avisa en
+  cada arranque); `"no"` lo cierra del todo.
+- **Imágenes**: cada snapshot anota el digest de las imágenes que lo crearon;
+  al restaurar, `up` avisa si este equipo ejecuta otras y `images sync` las
+  iguala. Fija `flowsint_version` para no depender de `latest`.
+- **Apagado del equipo**: `up` se entera de que el apagado empieza (logind) y
+  lanza el snapshot final en ese momento. La ventana la fija logind (5 s de
+  fábrica): `doctor` te dice cómo ampliarla. Si no cabe, vale el último
+  snapshot automático.
 - **Swap**: tmpfs puede paginarse a swap. Si tu swap está en disco y sin cifrar
   (típico con hibernación), datos de la sesión pueden acabar en claro en el
   disco. `doctor` avisa de cualquier swap que no sea zram; no hibernes con la
@@ -195,6 +228,8 @@ save_interval_min = 10
 keep_hourly = 24
 keep_daily = 30
 keep_monthly = 12
+docker_socket = "filtrado"     # socket de Docker que ve Flowsint: "filtrado" | "directo" | "no"
+flowsint_version = "latest"    # etiqueta de las imágenes de Flowsint; fíjala (p. ej. "1.2.10") para no cambiar de versión sin querer
 ```
 
 ## Documentación
