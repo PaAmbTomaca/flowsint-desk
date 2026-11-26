@@ -29,7 +29,7 @@ var statusCmd = &cobra.Command{
 		if err == nil && sess.Alive() {
 			st, _ := time.Parse(time.RFC3339, sess.Started)
 			fmt.Printf("estado: CORRIENDO\n  pid: %d\n  host: %s (boot %s)\n  url: http://127.0.0.1:%d\n  arrancado: %s (hace %s)\n",
-				sess.PID, sess.Host, sess.BootID[:8], sess.Port, sess.Started, time.Since(st).Round(time.Second))
+				sess.PID, sess.Host, short(sess.BootID), sess.Port, sess.Started, time.Since(st).Round(time.Second))
 		} else if err == nil {
 			fmt.Println("estado: NO corriendo (hay restos de una sesión muerta en", runDir+")")
 		} else {

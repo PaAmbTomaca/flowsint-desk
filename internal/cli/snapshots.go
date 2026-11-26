@@ -46,7 +46,7 @@ var backupCmd = &cobra.Command{
 		for time.Now().Before(deadline) {
 			after, err := store.Latest(se)
 			if err == nil && after != before && after != "" {
-				fmt.Printf("✔ snapshot creado: %s\n", after[:8])
+				fmt.Printf("✔ snapshot creado: %s\n", short(after))
 				return nil
 			}
 			time.Sleep(2 * time.Second)

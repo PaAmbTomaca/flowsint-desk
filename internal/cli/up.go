@@ -129,7 +129,7 @@ var upCmd = &cobra.Command{
 				if err := os.WriteFile(secFile, b, 0o600); err != nil {
 					return err
 				}
-				restored = snapID[:8]
+				restored = short(snapID)
 				fmt.Printf("✔ secretos recuperados del snapshot %s\n", restored)
 			}
 		} else {
@@ -257,14 +257,14 @@ var upCmd = &cobra.Command{
 				return
 			}
 			id, err := store.Backup(se, filepath.Join(runDir, "staging"), map[string]string{
-				"host": host, "boot": boot[:8], "tipo": kind,
+				"host": host, "boot": short(boot), "tipo": kind,
 			})
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "aviso: restic backup falló:", redactText(err.Error(), redactVals))
 				return
 			}
 			fmt.Printf("✔ snapshot %s guardado (%s, %d nodos, %d rels, %d tablas pg)\n",
-				id[:8], kind, m.Neo4jTotalN, m.Neo4jTotalR, len(m.PGRows))
+				short(id), kind, m.Neo4jTotalN, m.Neo4jTotalR, len(m.PGRows))
 			// retención: como mucho una vez al día
 			if cfg.ForgetDue() {
 				if out, err := store.Forget(se, cfg.KeepHourly, cfg.KeepDaily, cfg.KeepMonthly, true); err != nil {

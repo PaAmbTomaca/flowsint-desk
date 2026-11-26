@@ -108,11 +108,11 @@ var initCmd = &cobra.Command{
 		if err := os.WriteFile(filepath.Join(staging, "manifest.json"), mb, 0o600); err != nil {
 			return err
 		}
-		id, err := store.Backup(se, staging, map[string]string{"host": host, "boot": boot[:8], "tipo": "init"})
+		id, err := store.Backup(se, staging, map[string]string{"host": host, "boot": short(boot), "tipo": "init"})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("✔ primer snapshot creado: %s (vacío: solo secretos)\n", id[:8])
+		fmt.Printf("✔ primer snapshot creado: %s (vacío: solo secretos)\n", short(id))
 
 		if save, _ := passphrase.AskSaveKeyring(); save {
 			if err := passphrase.SaveKeyring(pass); err != nil {
