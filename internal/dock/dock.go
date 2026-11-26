@@ -7,7 +7,10 @@ package dock
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -453,8 +456,45 @@ func saveToCache(env []string, cacheDir, img string) error {
 	if out, err := Run(env, "docker", "save", "-o", tar, img); err != nil {
 		return fmt.Errorf("docker save %s: %v: %s", img, err, out)
 	}
+	if sum, err := fileSHA256(tar); err == nil {
+		_ = os.WriteFile(sumFile(cacheDir, img), []byte(sum+"\n"), 0o600)
+	}
 	if d := repoDigest(env, img); d != "" {
 		return os.WriteFile(digestFile(cacheDir, img), []byte(d+"\n"), 0o600)
+	}
+	return nil
+}
+
+func sumFile(cacheDir, image string) string { return cacheFile(cacheDir, image) + ".sha256" }
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// verifyCached comprueba que el tar de la caché es el mismo que se guardó al
+// descargarlo. Una caché de una versión anterior (sin suma) se da por buena y
+// se le anota la suma ahora.
+func verifyCached(cacheDir, img string) error {
+	tar := cacheFile(cacheDir, img)
+	got, err := fileSHA256(tar)
+	if err != nil {
+		return err
+	}
+	b, err := os.ReadFile(sumFile(cacheDir, img))
+	if err != nil {
+		return os.WriteFile(sumFile(cacheDir, img), []byte(got+"\n"), 0o600)
+	}
+	if want := strings.TrimSpace(string(b)); want != got {
+		return fmt.Errorf("la imagen en caché de %s NO coincide con la que se descargó (sha256 %s…, esperado %s…): no se carga. Vuelve a descargarla con `flowsint-desk images update`", img, got[:12], want[:min(12, len(want))])
 	}
 	return nil
 }
@@ -470,6 +510,9 @@ func EnsureImages(env []string, cacheDir string, images []string, logf func(stri
 		tar := cacheFile(cacheDir, img)
 		if _, err := os.Stat(tar); err == nil {
 			logf("cargando %s desde la caché", img)
+			if err := verifyCached(cacheDir, img); err != nil {
+				return err
+			}
 			if out, err := Run(env, "docker", "load", "-i", tar); err != nil {
 				return fmt.Errorf("docker load %s: %v: %s", img, err, out)
 			}
@@ -513,6 +556,7 @@ func InCache(cacheDir, img string) bool {
 func DropCache(cacheDir, img string) {
 	_ = os.Remove(cacheFile(cacheDir, img))
 	_ = os.Remove(digestFile(cacheDir, img))
+	_ = os.Remove(sumFile(cacheDir, img))
 }
 
 // CachedDigests devuelve el digest anotado en la caché para cada imagen

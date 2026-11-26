@@ -50,3 +50,28 @@ func TestTailFile(t *testing.T) {
 		t.Fatalf("tailFile = %q", got)
 	}
 }
+
+func TestVerifyCached(t *testing.T) {
+	d := t.TempDir()
+	img := "postgres:15-alpine"
+	if err := os.WriteFile(cacheFile(d, img), []byte("contenido original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// caché antigua sin suma: se acepta y se anota
+	if err := verifyCached(d, img); err != nil {
+		t.Fatalf("primera vez: %v", err)
+	}
+	if _, err := os.Stat(sumFile(d, img)); err != nil {
+		t.Fatal("debe anotarse la suma")
+	}
+	if err := verifyCached(d, img); err != nil {
+		t.Fatalf("sin cambios: %v", err)
+	}
+	// manipulada o corrupta: no se carga
+	if err := os.WriteFile(cacheFile(d, img), []byte("contenido cambiado"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCached(d, img); err == nil {
+		t.Fatal("un tar distinto del descargado debe rechazarse")
+	}
+}
