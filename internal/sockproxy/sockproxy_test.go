@@ -26,6 +26,12 @@ func fakeDaemon(t *testing.T, sock string, seen *[]string) {
 			if !strings.Contains(string(b), "projectdiscovery") {
 				t.Errorf("el cuerpo de create no llegó entero al daemon: %q", b)
 			}
+			// el proxy debe haber endurecido el contenedor
+			for _, quiere := range []string{`"CapDrop":["ALL"]`, `"SecurityOpt":["no-new-privileges"]`, `"Memory":1073741824`, `"PidsLimit":256`, `"NetworkMode":"bridge"`} {
+				if !strings.Contains(string(b), quiere) {
+					t.Errorf("falta %s en el create que llega al daemon: %s", quiere, b)
+				}
+			}
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"Id":"` + fakeID + `","Warnings":[]}`))
 			return
@@ -61,7 +67,7 @@ func TestFlujoDeEnricherPermitidoYLoDemasNo(t *testing.T) {
 	var seen []string
 	fakeDaemon(t, up, &seen)
 	var denegados []string
-	p, err := Start(px, up, false, func(s string) { denegados = append(denegados, s) })
+	p, err := Start(px, up, false, Limits{MemoryBytes: 1 << 30, Pids: 256}, func(s string) { denegados = append(denegados, s) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +105,17 @@ func TestFlujoDeEnricherPermitidoYLoDemasNo(t *testing.T) {
 		{"POST", "/v1.43/containers/create", `{"Image":"alpine","HostConfig":{"PidMode":"host"}}`},
 		{"POST", "/v1.43/containers/create", `{"Image":"alpine","HostConfig":{"CapAdd":["SYS_ADMIN"]}}`},
 		{"POST", "/v1.43/containers/create", `no es json`},
+		// publicar puertos (saltaría el "solo loopback") o entrar en la red del stack
+		{"POST", "/v1.43/containers/create", `{"Image":"alpine","HostConfig":{"PortBindings":{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"8099"}]}}}`},
+		{"POST", "/v1.43/containers/create", `{"Image":"alpine","HostConfig":{"PublishAllPorts":true}}`},
+		{"POST", "/v1.43/containers/create", `{"Image":"alpine","NetworkingConfig":{"EndpointsConfig":{"flowsint-desk-net":{}}}}`},
+		{"POST", "/v1.43/containers/create", `{"Image":"alpine","HostConfig":{"RestartPolicy":{"Name":"always"}}}`},
+		// una opción que el proxy no conoce se deniega por defecto
+		{"POST", "/v1.43/containers/create", `{"Image":"alpine","HostConfig":{"OpcionDelFuturo":"x"}}`},
+		{"POST", "/v1.43/containers/create", `{"Image":"alpine","HostConfig":{"DeviceCgroupRules":["a *:* rwm"]}}`},
+		// rutas con trucos
+		{"GET", "/v1.43/images/x%2F..%2F..%2Fcontainers%2Fjson/json", ""},
+		{"GET", "/v1.43/containers/../volumes", ""},
 		// espiar o tocar los contenedores de las BD (no creados por el proxy)
 		{"GET", "/v1.43/containers/flowsint-desk-postgres/json", ""},
 		{"GET", "/v1.43/containers/flowsint-desk-neo4j/logs", ""},
@@ -139,7 +156,7 @@ func TestModoNoDeniegaTodo(t *testing.T) {
 	up, px := filepath.Join(d, "real.sock"), filepath.Join(d, "proxy.sock")
 	var seen []string
 	fakeDaemon(t, up, &seen)
-	p, err := Start(px, up, true, nil)
+	p, err := Start(px, up, true, Limits{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,5 +177,19 @@ func TestValidMode(t *testing.T) {
 	}
 	if ValidMode("") || ValidMode("abierto") {
 		t.Error("modos desconocidos no valen")
+	}
+}
+
+func TestHardenRespetaLimitesPropiosYNoInventaSiCero(t *testing.T) {
+	out, err := harden([]byte(`{"Image":"x","HostConfig":{"Memory":123}}`), Limits{MemoryBytes: 999, Pids: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"Memory":123`) || strings.Contains(string(out), "PidsLimit") {
+		t.Fatalf("harden = %s", out)
+	}
+	out, _ = harden([]byte(`{"Image":"x"}`), Limits{})
+	if !strings.Contains(string(out), `"CapDrop":["ALL"]`) || strings.Contains(string(out), `"Memory"`) {
+		t.Fatalf("sin HostConfig: %s", out)
 	}
 }

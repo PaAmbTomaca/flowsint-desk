@@ -11,7 +11,8 @@
 // Qué deja pasar (lo que usa flowsint-enrichers/src/tools/dockertool.py y nada
 // más): ping/version, pull e inspección de imágenes, y crear / arrancar /
 // esperar / leer logs / borrar contenedores SIN montajes del host, sin
-// privilegios y sin compartir namespaces. Las operaciones sobre contenedores
+// privilegios, sin publicar puertos y sin compartir namespaces ni la red del
+// stack. Además cada contenedor se crea sin capacidades y con topes. Las operaciones sobre contenedores
 // solo valen para los que se crearon a través de este proxy.
 package sockproxy
 
@@ -44,6 +45,7 @@ type Proxy struct {
 	ln      net.Listener
 	srv     *http.Server
 	denyAll bool
+	limits  Limits
 	logf    func(string)
 
 	mu  sync.Mutex
@@ -59,7 +61,7 @@ var (
 // Start escucha en listenPath y reenvía a upstreamSock lo permitido. Con
 // denyAll=true no reenvía nada (modo "no"). logf recibe una línea por cada
 // petición denegada (sin cuerpos: pueden llevar datos).
-func Start(listenPath, upstreamSock string, denyAll bool, logf func(string)) (*Proxy, error) {
+func Start(listenPath, upstreamSock string, denyAll bool, limits Limits, logf func(string)) (*Proxy, error) {
 	_ = os.Remove(listenPath)
 	ln, err := net.Listen("unix", listenPath)
 	if err != nil {
@@ -75,7 +77,7 @@ func Start(listenPath, upstreamSock string, denyAll bool, logf func(string)) (*P
 	if logf == nil {
 		logf = func(string) {}
 	}
-	p := &Proxy{ln: ln, denyAll: denyAll, logf: logf, ids: map[string]bool{}}
+	p := &Proxy{ln: ln, denyAll: denyAll, limits: limits, logf: logf, ids: map[string]bool{}}
 	rp := &httputil.ReverseProxy{
 		Director: func(r *http.Request) {
 			r.URL.Scheme = "http"
@@ -119,6 +121,12 @@ func (p *Proxy) check(r *http.Request) string {
 	if p.denyAll {
 		return "el acceso a Docker está desactivado (docker_socket = \"no\")"
 	}
+	// nada de rutas "ingeniosas": ni .. ni barras codificadas, que el proxy y
+	// el motor podrían interpretar de forma distinta
+	if raw := strings.ToLower(r.URL.EscapedPath()); strings.Contains(r.URL.Path, "..") ||
+		strings.Contains(raw, "%2f") || strings.Contains(raw, "%5c") || strings.Contains(r.URL.Path, "//") {
+		return "ruta no permitida"
+	}
 	path := versionPrefix.ReplaceAllString(r.URL.Path, "")
 	switch {
 	case path == "/_ping" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
@@ -144,8 +152,13 @@ func (p *Proxy) check(r *http.Request) string {
 		if reason := checkCreate(body); reason != "" {
 			return reason
 		}
+		body, err = harden(body, p.limits)
+		if err != nil {
+			return "cuerpo JSON inválido"
+		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
+		r.Header.Set("Content-Length", fmt.Sprint(len(body)))
 		return ""
 	}
 	if m := containerOp.FindStringSubmatch(path); m != nil {
@@ -164,54 +177,112 @@ func (p *Proxy) check(r *http.Request) string {
 	return "endpoint fuera de la lista permitida"
 }
 
+// Claves de HostConfig que un enricher puede fijar a un valor NO vacío. Todo
+// lo demás debe venir vacío/cero: lista de lo PERMITIDO, no de lo prohibido,
+// para que una opción nueva del motor no sea un agujero por omisión.
+var hostConfigAllowed = map[string]bool{
+	"NetworkMode": true, "AutoRemove": true, "Init": true, "ReadonlyRootfs": true,
+	"Memory": true, "MemorySwap": true, "MemoryReservation": true, "MemorySwappiness": true,
+	"NanoCpus": true, "CpuShares": true, "CpuPeriod": true, "CpuQuota": true, "PidsLimit": true,
+	"ShmSize": true, "Ulimits": true, "Dns": true, "DnsOptions": true, "DnsSearch": true,
+	"ExtraHosts": true, "ConsoleSize": true, "LogConfig": true, "Tmpfs": true,
+	"RestartPolicy": true, "CapDrop": true, "MaskedPaths": true, "ReadonlyPaths": true,
+	"PidMode": true, "IpcMode": true, "UTSMode": true, "UsernsMode": true, "CgroupnsMode": true,
+	"Isolation": true, "OomScoreAdj": true,
+}
+
+// emptyJSON: el valor es "nada" (null, false, 0, "", [] o {}).
+func emptyJSON(v json.RawMessage) bool {
+	switch strings.Join(strings.Fields(string(v)), "") {
+	case "", "null", "false", "0", `""`, "[]", "{}":
+		return true
+	}
+	return false
+}
+
 // checkCreate valida el JSON de POST /containers/create: nada que dé acceso
-// al host o a otros contenedores.
+// al host, a la red local o a otros contenedores.
 func checkCreate(body []byte) string {
 	var c struct {
-		HostConfig struct {
-			Binds          []string
-			Mounts         []json.RawMessage
-			VolumesFrom    []string
-			Privileged     bool
-			CapAdd         []string
-			Devices        []json.RawMessage
-			DeviceRequests []json.RawMessage
-			SecurityOpt    []string
-			Sysctls        map[string]string
-			NetworkMode    string
-			PidMode        string
-			IpcMode        string
-			UTSMode        string
-			UsernsMode     string
-			CgroupnsMode   string
-			CgroupParent   string
-			Runtime        string
-			Links          []string
+		HostConfig       map[string]json.RawMessage
+		NetworkingConfig struct {
+			EndpointsConfig map[string]json.RawMessage
 		}
 	}
 	if err := json.Unmarshal(body, &c); err != nil {
 		return "cuerpo JSON inválido"
 	}
-	h := c.HostConfig
-	switch {
-	case len(h.Binds) > 0 || len(h.Mounts) > 0 || len(h.VolumesFrom) > 0:
-		return "no se permiten montajes (Binds/Mounts/VolumesFrom): darían acceso a ficheros del usuario"
-	case h.Privileged:
-		return "no se permiten contenedores privilegiados"
-	case len(h.CapAdd) > 0 || len(h.Devices) > 0 || len(h.DeviceRequests) > 0 || len(h.SecurityOpt) > 0 || len(h.Sysctls) > 0:
-		return "no se permiten capacidades, dispositivos, security-opt ni sysctls extra"
-	case h.CgroupParent != "" || h.Runtime != "" || len(h.Links) > 0:
-		return "no se permiten cgroup-parent, runtime ni links"
+	for k, v := range c.HostConfig {
+		if !hostConfigAllowed[k] && !emptyJSON(v) {
+			return "opción no permitida para un enricher: HostConfig." + k
+		}
 	}
-	if n := h.NetworkMode; n != "" && n != "bridge" && n != "default" && n != "none" {
+	str := func(k string) string {
+		var v string
+		_ = json.Unmarshal(c.HostConfig[k], &v)
+		return v
+	}
+	if n := str("NetworkMode"); n != "" && n != "bridge" && n != "default" && n != "none" {
 		return "red no permitida (" + n + "): solo bridge"
 	}
-	for nombre, v := range map[string]string{"PidMode": h.PidMode, "IpcMode": h.IpcMode, "UTSMode": h.UTSMode, "UsernsMode": h.UsernsMode, "CgroupnsMode": h.CgroupnsMode} {
-		if v != "" && v != "private" {
-			return nombre + " no permitido (" + v + "): no se comparten namespaces"
+	for _, k := range []string{"PidMode", "IpcMode", "UTSMode", "UsernsMode", "CgroupnsMode"} {
+		if v := str(k); v != "" && v != "private" {
+			return k + " no permitido (" + v + "): no se comparten namespaces"
+		}
+	}
+	if rp := c.HostConfig["RestartPolicy"]; !emptyJSON(rp) {
+		var r struct{ Name string }
+		_ = json.Unmarshal(rp, &r)
+		if r.Name != "" && r.Name != "no" {
+			return "no se permiten contenedores que se reinicien solos"
+		}
+	}
+	// nada de engancharse a la red del stack (ahí está Redis sin contraseña)
+	for net := range c.NetworkingConfig.EndpointsConfig {
+		if net != "bridge" && net != "default" && net != "podman" {
+			return "red no permitida (" + net + "): un enricher no entra en la red de Flowsint"
 		}
 	}
 	return ""
+}
+
+// Limits son los topes que se imponen a cada contenedor de enricher. Cero =
+// no imponer (p. ej. si el sistema no delega el controlador de memoria).
+type Limits struct {
+	MemoryBytes int64
+	Pids        int64
+}
+
+// harden reescribe el cuerpo de un create YA validado para que el contenedor
+// arranque con lo mínimo: sin capacidades, sin poder ganar privilegios y, si
+// se puede, con tope de memoria y de procesos (la RAM es también donde vive
+// toda la sesión: un enricher desbocado no debe poder llenarla).
+func harden(body []byte, lim Limits) ([]byte, error) {
+	var c map[string]json.RawMessage
+	if err := json.Unmarshal(body, &c); err != nil {
+		return nil, err
+	}
+	hc := map[string]json.RawMessage{}
+	if raw, ok := c["HostConfig"]; ok && !emptyJSON(raw) {
+		if err := json.Unmarshal(raw, &hc); err != nil {
+			return nil, err
+		}
+	}
+	hc["CapDrop"] = json.RawMessage(`["ALL"]`)
+	hc["SecurityOpt"] = json.RawMessage(`["no-new-privileges"]`)
+	hc["Privileged"] = json.RawMessage(`false`)
+	if lim.MemoryBytes > 0 && emptyJSON(hc["Memory"]) {
+		hc["Memory"] = json.RawMessage(fmt.Sprint(lim.MemoryBytes))
+	}
+	if lim.Pids > 0 && emptyJSON(hc["PidsLimit"]) {
+		hc["PidsLimit"] = json.RawMessage(fmt.Sprint(lim.Pids))
+	}
+	out, err := json.Marshal(hc)
+	if err != nil {
+		return nil, err
+	}
+	c["HostConfig"] = out
+	return json.Marshal(c)
 }
 
 // rememberCreated anota el Id de cada contenedor creado con éxito.

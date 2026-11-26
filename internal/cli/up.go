@@ -270,7 +270,7 @@ var upCmd = &cobra.Command{
 			fmt.Println("⚠ docker_socket = \"directo\": Flowsint ve el socket de Docker sin filtrar (un fallo en Flowsint daría acceso a tus ficheros)")
 		default:
 			px, err := sockproxy.Start(enrichersSock, run.Socket(runDir), cfg.DockerSocket == sockproxy.ModeOff,
-				func(l string) { fmt.Fprintln(os.Stderr, "⚠", l) })
+				enricherLimits(), func(l string) { fmt.Fprintln(os.Stderr, "⚠", l) })
 			if err != nil {
 				return fmt.Errorf("arrancando el proxy filtrado del socket de Docker: %w", err)
 			}
@@ -476,6 +476,26 @@ const closeGrace = 2 * time.Minute
 // finalFailedMarker es el fichero (tmpfs) con el que `up` le dice a `down`
 // que el snapshot final falló y la sesión sigue abierta.
 func finalFailedMarker(runDir string) string { return filepath.Join(runDir, "final-failed") }
+
+// enricherLimits: topes para los contenedores que lanzan los enrichers. Solo
+// se imponen si el sistema delega al usuario los controladores de cgroup
+// correspondientes; si no, pedirlos haría fallar la creación del contenedor.
+func enricherLimits() sockproxy.Limits {
+	b, err := os.ReadFile(fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service/cgroup.controllers", os.Getuid(), os.Getuid()))
+	if err != nil {
+		return sockproxy.Limits{}
+	}
+	var l sockproxy.Limits
+	for _, c := range strings.Fields(string(b)) {
+		switch c {
+		case "memory":
+			l.MemoryBytes = 2 << 30
+		case "pids":
+			l.Pids = 1024
+		}
+	}
+	return l
+}
 
 // staleName devuelve un nombre único para apartar un directorio de ejecución
 // muerto (casa con el glob /tmp/flowsint-desk-*.stale que barre `up`).
