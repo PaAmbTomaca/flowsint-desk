@@ -128,9 +128,10 @@ flowsint-desk forget                          # retention (24 h covered, 30 d, 1
 #    oldest of each bucket; keep-daily/keep-monthly likewise per day/month)
 flowsint-desk passwd                          # change the passphrase
 flowsint-desk verify [ID]                     # is the backup intact? restic check + snapshot sha256, no session needed
-flowsint-desk selftest                        # smoke test: a real full cycle with a throwaway vault
+flowsint-desk selftest                        # smoke test: real full cycle + a real enricher + abuse attempts against the socket
 flowsint-desk images [pull|update|sync]       # this machine's images vs. the last snapshot's; sync matches them by digest
 flowsint-desk unlock --restic                 # remove stale restic locks (after a kill -9 in the middle of a backup)
+flowsint-desk mirror [--to PATH]              # second copy of the vault (e.g. an external disk); refreshed automatically on close
 flowsint-desk engine [docker|podman]          # show this machine's container engine, or switch it
 flowsint-desk version
 flowsint-desk logs [--tail N] [filter]        # logs of the live session's containers, sanitized (secrets → ***)
@@ -211,7 +212,14 @@ cache and sends you back through `setup`. Your data is untouched. Rationale:
   that refuses to inspect the database containers. A bug in Flowsint therefore
   cannot reach your home directory. `docker_socket = "directo"` restores the
   raw socket (warns on every start); `"no"` closes it entirely.
-- **Images**: every snapshot records the digest of the images that created it;
+- **Trimmed containers**: every service starts with no capabilities except the
+  ones its image needs to boot, cannot gain privileges and cannot dump memory
+  to disk (`core=0`). Containers launched by enrichers get no capabilities at
+  all and, where the system allows it, memory and process limits.
+- **Two copies, and checked**: `mirror` keeps a second copy of the vault
+  elsewhere; `up` checks the vault's integrity every 7 days
+  (`verify_every_days`) and `status` says when it last did.
+- **Images**: the cache is verified by sha256 before loading. Every snapshot records the digest of the images that created it;
   on restore `up` warns if this machine runs different ones and `images sync`
   matches them. Pin `flowsint_version` to stop depending on `latest`.
 - **System shutdown**: `up` is told when shutdown begins (logind) and takes the
@@ -252,6 +260,8 @@ save_interval_min = 10
 keep_hourly = 24
 keep_daily = 30
 keep_monthly = 12
+verify_every_days = 7          # how often `up` checks the vault's integrity (0 = never)
+mirror_path = ""               # second copy of the vault; set by `flowsint-desk mirror --to PATH`
 engine = "docker"              # container engine: "docker" | "podman" (chosen in setup; switch with: flowsint-desk engine)
 docker_socket = "filtrado"     # Docker socket Flowsint sees: "filtrado" (filtered) | "directo" (raw) | "no"
 flowsint_version = "latest"    # Flowsint image tag; pin it (e.g. "1.2.10") so the version never changes by accident
@@ -280,5 +290,7 @@ go test ./...     # no Docker or restic needed: lock, snapshot, config, redactio
 CI (`.github/workflows/ci.yml`) runs on every push: build + vet + test; the
 requirements check inside Arch, Debian 13 and Fedora containers; and the **real
 full cycle** (`setup` + smoke test with genuine Flowsint and restic) with both
-engines. What CI cannot cover — pCloud, keyring, system shutdown, enrichers —
+engines, including a real enricher through the filtered socket and six ugly
+cases (wrong passphrase, `kill -9`, vault unreachable on close, second
+machine...). What CI cannot cover — pCloud, keyring, system shutdown, enrichers —
 is tested on the machine with `selftest`.

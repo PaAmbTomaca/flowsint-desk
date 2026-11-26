@@ -89,19 +89,42 @@ ASCII; proceso *pause* de Podman vivo tras cerrar), ya corregidos.
 Se añadió también **Podman como segundo motor**, elegible en `setup`
 (`docs/decisions/0008-two-container-engines.md`).
 
+## Cuarta tanda: las doce mejoras propuestas tras la revisión
+
+| # | Mejora | Estado |
+|---|--------|--------|
+| 1 | Enricher real en la prueba | `selftest` lanza subfinder desde el contenedor de la API con la librería que usa Flowsint. **Probado en real con ambos motores.** |
+| 2 | Proxy: puertos, red del stack, rutas con trucos; lista de PERMITIDOS | Hecho. Los tres abusos (montar `/etc`, publicar un puerto, privilegiado) salen `DENEGADO` en el CI real con ambos motores. Además cada contenedor de enricher se crea sin capacidades. |
+| 3 | Volcados de memoria | `core=0` en los seis servicios; `selftest` lo comprueba en un contenedor real. **Probado.** |
+| 4 | Permisos y límites | Capacidades mínimas por servicio (**probado: el stack arranca así en ambos motores**). Tope de memoria/procesos solo para los enrichers y solo si el sistema delega los cgroups; al stack no se le pone tope de memoria (depende demasiado de la máquina). |
+| 5 | Integridad de la caché | sha256 de cada `.tar`, verificado antes de cargar. |
+| 6 | Acciones del CI por hash | Las cuatro, fijadas al commit que ya se ejecutaba. |
+| 7 | Segunda copia | `mirror [--to RUTA]`, incremental; `up` la actualiza al cerrar. **Probado en real.** |
+| 8 | Verificación periódica | `restic check` cada `verify_every_days` al arrancar; `status` lo muestra. |
+| 9 | Casos feos en real | Frase incorrecta, `kill -9` + `down`, `kill -9` + `up`, almacén inaccesible al cerrar, segunda copia, segundo equipo: en el job `e2e` con ambos motores. |
+| 10 | Compose ↔ Podman | Test que falla si divergen (imagen, variables, volúmenes, puerto, capacidades, comando). |
+| 11 | Versiones publicadas | Flujo `release` (binarios + SHA256SUMS al etiquetar). **Sin ejecutar**: hace falta empujar una etiqueta. |
+| 12 | Podman 5.4 / 6.x | **No conseguido.** Se intentó dentro de contenedores de Debian y Arch: `newuidmap` falla en ese entorno anidado, antes de llegar al producto. Queda confirmado solo que sus paquetes se instalan. Sigue probado únicamente Podman 5.7. |
+
+Probar en real destapó además que los comandos de consulta dejaban un
+directorio vacío en `/tmp` (corregido) y que `doctor` daba por bueno un Podman
+que no podía crear su user namespace (ahora lo comprueba de verdad).
+
 ## Sigue pendiente
 
 1. **Validar en TU máquina** (el CI no es un escritorio): `flowsint-desk
-   selftest`; un enricher (subfinder) con `docker_socket = "filtrado"` —lo único
-   del flujo que no se ha ejecutado nunca—; apagar el equipo con una sesión
-   abierta; pCloud y llavero reales; los casos de la batería §7 que el CI no
-   cubre (segundo equipo, `kill -9`, frase incorrecta: probados solo con dobles).
+   selftest` (incluye ya el enricher y los abusos al socket); apagar el equipo
+   con una sesión abierta; pCloud y llavero reales.
 2. Los nombres de paquete de Debian que sugiere `doctor` (uidmap, rootlesskit,
    slirp4netns, fuse-overlayfs, docker.io, docker-compose) no se han probado en
    una Debian 13.
 3. `Session.Alive()` solo mira el pid (reutilización de pid tras un kill -9,
    improbable).
 4. Podman 6.x (Arch, Fedora) y 5.4 (Debian): el CI probó 5.7. SELinux en Fedora.
+5. El flujo `release` no se ha ejecutado nunca.
+6. Sin arreglo desde la CLI: cualquier usuario o programa local puede abrir
+   `127.0.0.1:5273` y Flowsint permite registrarse; los secretos viajan como
+   variables de entorno de los contenedores.
 
 ## Cómo reproducir las comprobaciones
 

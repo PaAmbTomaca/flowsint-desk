@@ -33,7 +33,7 @@ con snapshots cifrados (restic) en pCloud. La especificación completa está en
 ## Estructura
 
 - `main.go` → `internal/cli` (cobra: setup, doctor, init, up, down, status, backup, snapshots, verify, selftest,
-  images, engine, unlock, forget, passwd, logs, version)
+  images, engine, mirror, unlock, forget, passwd, logs, version)
 - `internal/{config,passphrase,run,secrets,dock,session,store,snap,lock,sockproxy}`
 - `assets/`: `compose.yml` embebido (se escribe en el run dir en cada `up`) y
   `assets/migrations/*.cypher` (migraciones Neo4j idempotentes, re-aplicadas tras restore)
@@ -156,6 +156,17 @@ si no, se pide por terminal. Puerto por defecto 5273 (configurable en config.tom
   reset`/`migrate` ni sugerir el paquete `podman-docker`.
 - `ci/e2e.sh` es la prueba real de punta a punta con ambos motores: si cambias arranque,
   cierre o snapshots, es lo que tiene que seguir en verde (además del simulacro).
+
+- **Proxy del socket** (`internal/sockproxy`): valida `HostConfig` contra una lista de
+  claves PERMITIDAS y reescribe cada create (sin capacidades, no-new-privileges, topes si
+  hay cgroups). Si un enricher nuevo necesita una opción, se añade a `hostConfigAllowed`
+  con su test; no se vuelve a una lista de prohibidos.
+- **Endurecimiento del stack**: `core=0`, `cap_drop ALL` + las mínimas, en el compose Y
+  en `podmanSpec`. `TestPodmanSpecIgualQueElCompose` falla si divergen.
+- `selftest` es también la prueba de seguridad: enricher real, tres abusos que el proxy
+  debe denegar y `ulimit -c = 0`. `ci/e2e.sh` añade seis casos feos con motor real.
+- Los comandos de consulta limpian el directorio de ejecución al salir (`tidyRunDir`):
+  no dejar ficheros nuevos ahí fuera de una sesión sin añadirlos a esa lógica.
 
 ## Entorno ya preparado en esta máquina (sin sudo)
 

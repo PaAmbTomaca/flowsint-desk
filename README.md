@@ -129,9 +129,10 @@ flowsint-desk forget                          # retención (24 h cubiertas, 30 d
 #    más antiguo de cada bucket; keep-daily/keep-monthly igual por día/mes)
 flowsint-desk passwd                          # cambiar la frase de paso
 flowsint-desk verify [ID]                     # ¿la copia está entera? restic check + sha256 del snapshot, sin abrir sesión
-flowsint-desk selftest                        # prueba de humo: ciclo completo real con un almacén desechable
+flowsint-desk selftest                        # prueba de humo: ciclo completo real + un enricher de verdad + intentos de abuso al socket
 flowsint-desk images [pull|update|sync]       # imágenes de este equipo vs. las del último snapshot; sync las iguala por digest
 flowsint-desk unlock --restic                 # quitar bloqueos huérfanos de restic (tras un kill -9 en mitad de un backup)
+flowsint-desk mirror [--to RUTA]              # segunda copia del almacén (p. ej. disco externo); se actualiza sola al cerrar
 flowsint-desk engine [docker|podman]          # ver el motor de contenedores de este equipo, o cambiarlo
 flowsint-desk version
 flowsint-desk logs [--tail N] [filtro]        # logs de los contenedores de la sesión viva, saneados (secretos → ***)
@@ -214,7 +215,15 @@ imágenes y te manda repetir `setup`. Tus datos no se tocan. El porqué, en
   inspeccionar los de las bases de datos. Así un fallo en Flowsint no llega a tu
   home. `docker_socket = "directo"` restaura el socket sin filtrar (avisa en
   cada arranque); `"no"` lo cierra del todo.
-- **Imágenes**: cada snapshot anota el digest de las imágenes que lo crearon;
+- **Contenedores recortados**: cada servicio arranca sin capacidades salvo las
+  que su imagen necesita para arrancar, sin poder ganar privilegios y sin poder
+  volcar memoria a disco (`core=0`). Los contenedores que lanzan los enrichers
+  van sin ninguna capacidad y, si el sistema lo permite, con tope de memoria y
+  de procesos.
+- **Dos copias, y comprobadas**: `mirror` mantiene una segunda copia del almacén
+  en otro sitio; `up` comprueba la integridad del almacén cada 7 días
+  (`verify_every_days`) y `status` dice cuándo fue la última vez.
+- **Imágenes**: la caché se verifica por sha256 antes de cargarla. Cada snapshot anota el digest de las imágenes que lo crearon;
   al restaurar, `up` avisa si este equipo ejecuta otras y `images sync` las
   iguala. Fija `flowsint_version` para no depender de `latest`.
 - **Apagado del equipo**: `up` se entera de que el apagado empieza (logind) y
@@ -251,6 +260,8 @@ save_interval_min = 10
 keep_hourly = 24
 keep_daily = 30
 keep_monthly = 12
+verify_every_days = 7          # cada cuántos días `up` comprueba la integridad del almacén (0 = nunca)
+mirror_path = ""               # segunda copia del almacén; se rellena con `flowsint-desk mirror --to RUTA`
 engine = "docker"              # motor de contenedores: "docker" | "podman" (se elige en setup; cambiar: flowsint-desk engine)
 docker_socket = "filtrado"     # socket de Docker que ve Flowsint: "filtrado" | "directo" | "no"
 flowsint_version = "latest"    # etiqueta de las imágenes de Flowsint; fíjala (p. ej. "1.2.10") para no cambiar de versión sin querer
@@ -279,5 +290,7 @@ go test ./...     # sin Docker ni restic: lógica de bloqueo, snapshots, config,
 CI (`.github/workflows/ci.yml`) ejecuta en cada push: build + vet + test; la
 comprobación de requisitos en contenedores de Arch, Debian 13 y Fedora; y el
 **ciclo completo real** (`setup` + prueba de humo con Flowsint y restic
-auténticos) con los dos motores. Lo que el CI no puede cubrir —pCloud, llavero,
+auténticos) con los dos motores, incluido un enricher real a través del socket
+filtrado y seis casos feos (frase incorrecta, `kill -9`, almacén inaccesible al
+cerrar, segundo equipo...). Lo que el CI no puede cubrir —pCloud, llavero,
 apagado del equipo, enrichers— se prueba en la máquina con `selftest`.
