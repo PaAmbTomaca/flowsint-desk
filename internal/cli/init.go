@@ -51,139 +51,146 @@ ofrece recordarla en el llavero. Los datos se recuperan con "up".`,
 		// ruta del almacén
 		vault := initVault
 		if vault == "" {
-			vault = cfg.VaultPath
+			vault = suggestedVault(cfg.VaultPath)
 			fmt.Fprintf(os.Stderr, "Ruta del almacén (pCloud) [%s]: ", vault)
 			if line := passphrase.ReadLine(); line != "" {
 				vault = line
 			}
 		}
-		if vault, err = expandPath(vault); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(vault, 0o700); err != nil {
-			return fmt.Errorf("creando almacén %s: %w", vault, err)
-		}
-		cfg.VaultPath = vault
-		if err := cfg.Save(); err != nil {
-			return err
-		}
-		fmt.Println("✔ configuración guardada en", cfg.Path, "(sin secretos)")
-
-		runDir, err := run.Ensure()
-		if err != nil {
-			return err
-		}
-		passFile := filepath.Join(runDir, "restic-pass")
-		se := store.Env{Repo: vault, PassFile: passFile, CacheDir: filepath.Join(runDir, "restic-cache")}
-		host, _ := os.Hostname()
-		boot, _ := run.BootID()
-
-		// ¿el almacén ya tiene repositorio? (segundo equipo, o init repetido)
-		existente := false
-		if st, err := os.Stat(filepath.Join(vault, "config")); err == nil && !st.IsDir() {
-			existente = true
-		}
-		var pass string
-		if existente {
-			fmt.Println("· el almacén ya tiene un repositorio restic: no se crea uno nuevo")
-			if pass, err = passphrase.Prompt("Frase de paso del almacén existente", 1); err != nil {
-				return err
-			}
-		} else {
-			if pass, err = passphrase.PromptTwice(passphrase.MinLen); err != nil {
-				return err
-			}
-		}
-		if err := os.WriteFile(passFile, []byte(pass), 0o600); err != nil {
-			return err
-		}
-		// restic-pass es solo para este proceso: no sobrevive a init, acabe
-		// bien o mal (la copia `passphrase` solo se escribe al final, si todo fue bien)
-		defer os.Remove(passFile)
-
-		if existente {
-			if _, err := store.Exists(se); err != nil {
-				return fmt.Errorf("no se pudo abrir el almacén existente: %w", err)
-			}
-			snaps, err := store.Snapshots(se)
-			if err != nil {
-				return err
-			}
-			if len(snaps) > 0 {
-				// NUNCA un snapshot "init" nuevo encima de datos: `up` restaura el
-				// último snapshot, y uno vacío con secretos nuevos taparía todo.
-				last := snaps[len(snaps)-1]
-				fmt.Printf("✔ frase correcta · %d snapshots en el almacén (último: %s, %s, host %s)\n",
-					len(snaps), last.ShortID, last.Time.Local().Format("2006-01-02 15:04"), last.Host)
-				if err := finishInit(runDir, pass); err != nil {
-					return err
-				}
-				fmt.Println("✔ equipo conectado al almacén existente (no se ha creado ni modificado nada en él). Siguiente paso: `flowsint-desk up`")
-				return nil
-			}
-			fmt.Println("· el repositorio existe pero no tiene snapshots: se completa el init")
-		} else {
-			creado, err := store.Init(se)
-			if err != nil {
-				return err
-			}
-			if !creado {
-				return fmt.Errorf("restic dice que en %s ya hay un repositorio aunque no se ve su fichero config: revisa que pCloud haya terminado de sincronizar y repite `flowsint-desk init`", vault)
-			}
-			fmt.Println("✔ repositorio restic creado en", vault)
-		}
-
-		// secretos internos en tmpfs (viajarán cifrados dentro del snapshot)
-		sec, err := secrets.Generate()
-		if err != nil {
-			return err
-		}
-		secFile := filepath.Join(runDir, "secrets.env")
-		if err := secrets.WriteEnv(secFile, sec); err != nil {
-			return err
-		}
-		fmt.Println("✔ secretos de Flowsint generados en tmpfs (0600)")
-
-		// primer snapshot vacío (secrets.env + manifest init)
-		staging := filepath.Join(runDir, "staging")
-		if err := os.RemoveAll(staging); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(staging, 0o700); err != nil {
-			return err
-		}
-		secB, err := os.ReadFile(secFile)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(staging, "secrets.env"), secB, 0o600); err != nil {
-			return err
-		}
-		h, err := snap.SHA256File(filepath.Join(staging, "secrets.env"))
-		if err != nil {
-			return err
-		}
-		m := snap.Manifest{
-			Version: snap.Version, Kind: "init",
-			Created: time.Now().UTC().Format(time.RFC3339),
-			Host:    host, BootID: boot,
-			SHA256: map[string]string{"secrets.env": h},
-		}
-		mb, _ := json.MarshalIndent(m, "", "  ")
-		if err := os.WriteFile(filepath.Join(staging, "manifest.json"), mb, 0o600); err != nil {
-			return err
-		}
-		id, err := store.Backup(se, staging, map[string]string{"host": host, "boot": short(boot), "tipo": "init"})
-		if err != nil {
-			return err
-		}
-		fmt.Printf("✔ primer snapshot creado: %s (vacío: solo secretos)\n", short(id))
-		if err := finishInit(runDir, pass); err != nil {
-			return err
-		}
-		fmt.Println("✔ init listo. Siguiente paso: `flowsint-desk up`")
-		return nil
+		return runInit(cfg, vault)
 	},
+}
+
+// runInit configura el almacén en vault: lo crea (primer equipo) o conecta
+// este equipo al que ya existe (segundo equipo). Lo usan `init` y `setup`.
+func runInit(cfg *config.Config, vault string) error {
+	var err error
+	if vault, err = expandPath(vault); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(vault, 0o700); err != nil {
+		return fmt.Errorf("creando almacén %s: %w", vault, err)
+	}
+	cfg.VaultPath = vault
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	fmt.Println("✔ configuración guardada en", cfg.Path, "(sin secretos)")
+
+	runDir, err := run.Ensure()
+	if err != nil {
+		return err
+	}
+	passFile := filepath.Join(runDir, "restic-pass")
+	se := store.Env{Repo: vault, PassFile: passFile, CacheDir: filepath.Join(runDir, "restic-cache")}
+	host, _ := os.Hostname()
+	boot, _ := run.BootID()
+
+	// ¿el almacén ya tiene repositorio? (segundo equipo, o init repetido)
+	existente := false
+	if st, err := os.Stat(filepath.Join(vault, "config")); err == nil && !st.IsDir() {
+		existente = true
+	}
+	var pass string
+	if existente {
+		fmt.Println("· el almacén ya tiene un repositorio restic: no se crea uno nuevo")
+		if pass, err = passphrase.Prompt("Frase de paso del almacén existente", 1); err != nil {
+			return err
+		}
+	} else {
+		if pass, err = passphrase.PromptTwice(passphrase.MinLen); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(passFile, []byte(pass), 0o600); err != nil {
+		return err
+	}
+	// restic-pass es solo para este proceso: no sobrevive a init, acabe
+	// bien o mal (la copia `passphrase` solo se escribe al final, si todo fue bien)
+	defer os.Remove(passFile)
+
+	if existente {
+		if _, err := store.Exists(se); err != nil {
+			return fmt.Errorf("no se pudo abrir el almacén existente: %w", err)
+		}
+		snaps, err := store.Snapshots(se)
+		if err != nil {
+			return err
+		}
+		if len(snaps) > 0 {
+			// NUNCA un snapshot "init" nuevo encima de datos: `up` restaura el
+			// último snapshot, y uno vacío con secretos nuevos taparía todo.
+			last := snaps[len(snaps)-1]
+			fmt.Printf("✔ frase correcta · %d snapshots en el almacén (último: %s, %s, host %s)\n",
+				len(snaps), last.ShortID, last.Time.Local().Format("2006-01-02 15:04"), last.Host)
+			if err := finishInit(runDir, pass); err != nil {
+				return err
+			}
+			fmt.Println("✔ equipo conectado al almacén existente (no se ha creado ni modificado nada en él). Siguiente paso: `flowsint-desk up`")
+			return nil
+		}
+		fmt.Println("· el repositorio existe pero no tiene snapshots: se completa el init")
+	} else {
+		creado, err := store.Init(se)
+		if err != nil {
+			return err
+		}
+		if !creado {
+			return fmt.Errorf("restic dice que en %s ya hay un repositorio aunque no se ve su fichero config: revisa que pCloud haya terminado de sincronizar y repite `flowsint-desk init`", vault)
+		}
+		fmt.Println("✔ repositorio restic creado en", vault)
+	}
+
+	// secretos internos en tmpfs (viajarán cifrados dentro del snapshot)
+	sec, err := secrets.Generate()
+	if err != nil {
+		return err
+	}
+	secFile := filepath.Join(runDir, "secrets.env")
+	if err := secrets.WriteEnv(secFile, sec); err != nil {
+		return err
+	}
+	fmt.Println("✔ secretos de Flowsint generados en tmpfs (0600)")
+
+	// primer snapshot vacío (secrets.env + manifest init)
+	staging := filepath.Join(runDir, "staging")
+	if err := os.RemoveAll(staging); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		return err
+	}
+	secB, err := os.ReadFile(secFile)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(staging, "secrets.env"), secB, 0o600); err != nil {
+		return err
+	}
+	h, err := snap.SHA256File(filepath.Join(staging, "secrets.env"))
+	if err != nil {
+		return err
+	}
+	m := snap.Manifest{
+		Version: snap.Version, Kind: "init",
+		Created: time.Now().UTC().Format(time.RFC3339),
+		Host:    host, BootID: boot,
+		SHA256: map[string]string{"secrets.env": h},
+	}
+	mb, _ := json.MarshalIndent(m, "", "  ")
+	if err := os.WriteFile(filepath.Join(staging, "manifest.json"), mb, 0o600); err != nil {
+		return err
+	}
+	id, err := store.Backup(se, staging, map[string]string{"host": host, "boot": short(boot), "tipo": "init"})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("✔ primer snapshot creado: %s (vacío: solo secretos)\n", short(id))
+	if err := finishInit(runDir, pass); err != nil {
+		return err
+	}
+	fmt.Println("✔ init listo. Siguiente paso: `flowsint-desk up`")
+	return nil
 }
 
 // finishInit ofrece recordar la frase en el llavero. Solo si NO queda en el
