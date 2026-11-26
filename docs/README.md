@@ -47,6 +47,7 @@ docs/
 | 0005 | Una sola llave: la frase de paso; secretos dentro del snapshot cifrado |
 | 0006 | Método de snapshot Neo4j (APOC cypher) + verificación por manifest |
 | 0007 | Nunca ejecutar la CLI como root (guarda euid=0 → exit 1) |
+| 0008 | Dos motores de contenedores: Docker rootless y Podman rootless, elegidos por equipo (en inglés) |
 
 ### Propuestas pendientes (`proposals/`)
 
