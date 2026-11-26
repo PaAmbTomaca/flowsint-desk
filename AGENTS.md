@@ -32,7 +32,7 @@ con snapshots cifrados (restic) en pCloud. La especificación completa está en
 
 ## Estructura
 
-- `main.go` → `internal/cli` (cobra: doctor, init, up, down, status, backup, snapshots, unlock, forget, passwd)
+- `main.go` → `internal/cli` (cobra: doctor, setup, init, up, down, status, backup, snapshots, unlock, forget, passwd, logs)
 - `internal/{config,passphrase,run,secrets,dock,session,store,snap,lock}`
 - `assets/`: `compose.yml` embebido (se escribe en el run dir en cada `up`) y
   `assets/migrations/*.cypher` (migraciones Neo4j idempotentes, re-aplicadas tras restore)
@@ -47,8 +47,11 @@ con snapshots cifrados (restic) en pCloud. La especificación completa está en
 ```sh
 go build -o dist/flowsint-desk .
 go vet ./...
-go test ./internal/passphrase/   # único paquete con test; usa clave de SONDA, no toca la real del llavero
+go test ./...   # sin Docker ni restic; el test del llavero usa una clave de SONDA y se salta si no hay Secret Service
 ```
+
+CI (`.github/workflows/ci.yml`): build + vet + test en cada push. Los tests
+unitarios NO sustituyen a la batería de aceptación de `ENCARGO.md` §7.
 
 ## Uso del producto
 
@@ -95,6 +98,30 @@ si no, se pide por terminal. Puerto por defecto 5273 (configurable en config.tom
   (UNIQUE IMPORT LABEL): vale porque nada en Postgres los persiste (verificado).
 - Snapshots: `pg_dump` plano + APOC cypher plain + `secrets.env` + `manifest.json`
   (sha256 + recuentos pg/neo4j). Tras restaurar se verifican; si no cuadran, NO se arranca la UI.
+
+- **Cierre**: si el snapshot final falla, `up` NO desmonta (se perdería el trabajo sin
+  guardar); solo cierra sin guardar si la orden se repite antes de `closeGrace` (2 min).
+  No "simplifiques" eso a un aviso + teardown.
+- **Arranque**: las señales se registran al entrar en `up` y `session.json` se escribe
+  desde el principio con `fase: arrancando`. Cualquier error tras tomar el bloqueo pasa
+  por `teardown()` (defer). Todo desmontaje va por `teardown()`: no hay otro camino.
+- **restic-pass**: `<runDir>/restic-pass` es de la sesión `up`. Los demás comandos usan
+  `openStore()` (reutiliza el de la sesión viva sin reescribirlo, o `restic-pass.<pid>`
+  que se borra al salir). No escribir ahí desde otro comando.
+- `restic backup --json` y `restic ls --json` son **JSON Lines**; restic avisa por
+  stderr. Parsear solo stdout, línea a línea (`internal/store`). Códigos de salida:
+  10 = no hay repo, 12 = frase incorrecta.
+- `restic forget` agrupa por host+paths y el path del staging lleva el `boot_id`:
+  siempre `--group-by ""` o la retención no borra nada.
+- `init` sobre un almacén con snapshots NO crea snapshot (taparía los datos con uno
+  vacío: `up` restaura el último).
+- El bloqueo distingue equipos por `equipo` (hash de `/etc/machine-id`), no solo por
+  hostname. Para simular otro equipo en pruebas basta escribir un `lock.json` con otro
+  `host` u otro `equipo`.
+- `/tmp` es de todos: antes de usar o limpiar un directorio `flowsint-desk-*` comprobar
+  `run.Private()` (directorio real, nuestro, 0700).
+- Capturar con stderr separado todo lo que se guarde o se parsee (`dock.RunToFile`,
+  `dock.Output`): un aviso de `pg_dump` dentro del `.sql` lo hace irrestaurable.
 
 ## Entorno ya preparado en esta máquina (sin sudo)
 
