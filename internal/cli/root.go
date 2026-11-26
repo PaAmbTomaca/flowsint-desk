@@ -4,6 +4,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,12 @@ frase de paso.`,
 		if os.Geteuid() == 0 {
 			fmt.Fprintln(os.Stderr, "error: flowsint-desk NUNCA se ejecuta como root (prohibido sudo): la CLI se niega a arrancar con euid=0")
 			os.Exit(1)
+		}
+		// ~/.local/bin delante del PATH del proceso: ahí instala `setup` restic
+		// y los binarios rootless, y muchos shells (fish) no lo traen en el
+		// PATH. Sin esto doctor seguía en rojo tras instalarlos.
+		if home, err := os.UserHomeDir(); err == nil {
+			_ = os.Setenv("PATH", filepath.Join(home, ".local", "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
 		}
 		// endurecimiento obligatorio: umask restrictiva y sin cores
 		syscall.Umask(0o077)
