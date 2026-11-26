@@ -382,6 +382,12 @@ func PullExact(env []string, cacheDir, img, ref string) error {
 	return saveToCache(env, cacheDir, img)
 }
 
+// InCache dice si la imagen ya está guardada en la caché de disco.
+func InCache(cacheDir, img string) bool {
+	_, err := os.Stat(cacheFile(cacheDir, img))
+	return err == nil
+}
+
 // DropCache borra de la caché el tar y el digest de una imagen (para forzar
 // una descarga nueva).
 func DropCache(cacheDir, img string) {

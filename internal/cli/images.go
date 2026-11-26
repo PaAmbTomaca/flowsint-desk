@@ -44,64 +44,73 @@ Flowsint. pull/update/sync necesitan que no haya ninguna sesión abierta.`,
 		if len(args) == 1 {
 			op = args[0]
 		}
-		logf := func(f string, a ...any) { fmt.Printf("· "+f+"\n", a...) }
 		switch op {
 		case "":
 			return imagesStatus(cfg, cacheDir, images)
 		case "pull":
-			return withDaemon(func(env []string) error {
-				if err := dock.EnsureImages(env, cacheDir, images, logf); err != nil {
-					return err
-				}
-				fmt.Println("✔ imágenes en caché:", cacheDir)
-				return nil
-			})
+			return imagesPull(cacheDir, images)
 		case "update":
-			return withDaemon(func(env []string) error {
-				for _, img := range images {
-					dock.DropCache(cacheDir, img)
-				}
-				if err := dock.EnsureImages(env, cacheDir, images, logf); err != nil {
-					return err
-				}
-				fmt.Println("✔ imágenes actualizadas. Tras tu próximo snapshot, ejecuta `flowsint-desk images sync` en el otro equipo.")
-				return nil
-			})
-		case "sync":
-			want, quien, err := snapshotDigests(cfg)
-			if err != nil {
+			for _, img := range images {
+				dock.DropCache(cacheDir, img)
+			}
+			if err := imagesPull(cacheDir, images); err != nil {
 				return err
 			}
-			have := dock.CachedDigests(cacheDir, images)
-			var pendientes []string
-			for _, img := range images {
-				w := want[img]
-				if w == "" {
-					fmt.Printf("· %s: el snapshot no anota su digest (creado con una versión anterior o con otra etiqueta): no se toca\n", img)
-					continue
-				}
-				if have[img] != "" && len(dock.Drift(map[string]string{img: w}, have)) == 0 {
-					continue
-				}
-				pendientes = append(pendientes, img)
-			}
-			if len(pendientes) == 0 {
-				fmt.Printf("✔ este equipo ya tiene las mismas imágenes que el último snapshot (%s)\n", quien)
-				return nil
-			}
-			return withDaemon(func(env []string) error {
-				for _, img := range pendientes {
-					logf("descargando %s por digest", img)
-					if err := dock.PullExact(env, cacheDir, img, want[img]); err != nil {
-						return err
-					}
-				}
-				fmt.Printf("✔ %d imágenes igualadas a las del último snapshot (%s)\n", len(pendientes), quien)
-				return nil
-			})
+			fmt.Println("✔ imágenes actualizadas. Tras tu próximo snapshot, ejecuta `flowsint-desk images sync` en el otro equipo.")
+			return nil
+		case "sync":
+			return imagesSync(cfg, cacheDir, images)
 		}
 		return fmt.Errorf("operación desconocida %q: usa pull, update o sync", op)
 	},
+}
+
+func logDot(f string, a ...any) { fmt.Printf("· "+f+"\n", a...) }
+
+// imagesPull descarga a la caché las imágenes que falten.
+func imagesPull(cacheDir string, images []string) error {
+	return withDaemon(func(env []string) error {
+		if err := dock.EnsureImages(env, cacheDir, images, logDot); err != nil {
+			return err
+		}
+		fmt.Println("✔ imágenes en caché:", cacheDir)
+		return nil
+	})
+}
+
+// imagesSync deja en la caché, por digest, las imágenes del último snapshot.
+func imagesSync(cfg *config.Config, cacheDir string, images []string) error {
+	want, quien, err := snapshotDigests(cfg)
+	if err != nil {
+		return err
+	}
+	have := dock.CachedDigests(cacheDir, images)
+	var pendientes []string
+	for _, img := range images {
+		w := want[img]
+		if w == "" {
+			fmt.Printf("· %s: el snapshot no anota su digest (creado con una versión anterior o con otra etiqueta): no se toca\n", img)
+			continue
+		}
+		if have[img] != "" && len(dock.Drift(map[string]string{img: w}, have)) == 0 {
+			continue
+		}
+		pendientes = append(pendientes, img)
+	}
+	if len(pendientes) == 0 {
+		fmt.Printf("✔ nada que igualar con el último snapshot (%s)\n", quien)
+		return nil
+	}
+	return withDaemon(func(env []string) error {
+		for _, img := range pendientes {
+			logDot("descargando %s por digest", img)
+			if err := dock.PullExact(env, cacheDir, img, want[img]); err != nil {
+				return err
+			}
+		}
+		fmt.Printf("✔ %d imágenes igualadas a las del último snapshot (%s)\n", len(pendientes), quien)
+		return nil
+	})
 }
 
 // snapshotDigests devuelve los digests de imagen anotados en el manifest del

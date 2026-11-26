@@ -37,7 +37,10 @@ type doctorCheck struct {
 	warn bool
 	run  func() (bool, string) // ok, detalle (se imprime entre paréntesis)
 	fix  string
-	auto func() (string, error) // devuelve una nota opcional
+	// afterInit: lo resuelve el paso de almacén del asistente (`setup`/`init`),
+	// no un comando del sistema.
+	afterInit bool
+	auto      func() (string, error) // devuelve una nota opcional
 }
 
 var doctorCmd = &cobra.Command{
@@ -272,7 +275,7 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 			fix: "cambia el puerto en ~/.config/flowsint-desk/config.toml (port = ...) o libera el puerto"},
 
 		// --- almacén (pCloud) ---
-		{name: "almacén existe y es escribible: " + vault,
+		{name: "almacén existe y es escribible: " + vault, afterInit: true,
 			run: func() (bool, string) {
 				if _, err := os.Stat(vault); err != nil {
 					return false, "no existe"
@@ -371,7 +374,8 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 			},
 			fix:  "libera espacio en $HOME; las imágenes públicas (~varios GiB) se cachean en ~/.cache/flowsint-desk/images",
 			auto: autoCacheDir},
-		{name: "conectividad HTTPS a ghcr.io:443 y github.com:443",
+		// aviso, no bloqueo: con las imágenes ya en caché se trabaja sin red
+		{name: "conectividad HTTPS a ghcr.io:443 y github.com:443", warn: true,
 			run: func() (bool, string) {
 				ok1 := canDial("ghcr.io")
 				ok2 := canDial("github.com")
