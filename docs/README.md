@@ -1,8 +1,7 @@
 # Documentación de flowsint-desk
 
-Estructura de decisiones de arquitectura (estilo ADR). **Sin git**: estos
-ficheros son Markdown plano dentro del árbol; el control de versiones lo lleva
-quien coordina el proyecto, no este directorio.
+Estructura de decisiones de arquitectura (estilo ADR), en Markdown plano dentro
+del árbol y versionada con el resto del repo.
 
 ## Organización
 
@@ -18,7 +17,8 @@ docs/
 ├── research/            ← INVESTIGACIONES a fondo que sustentan propuestas
 │   └── 2026-11-....md
 ├── security/            ← AUDITORÍAS de seguridad
-│   └── 2026-11-auditoria-seguridad.md
+│   ├── 2026-11-auditoria-seguridad.md
+│   └── 2026-11-26-auditoria-repo.md
 └── mapa-arquitectura.html  ← 🗺️ MAPA VISUAL de toda la arquitectura (ábrelo en el navegador)
 ```
 
@@ -65,3 +65,4 @@ docs/
 | Fichero | Tema |
 |---|---|
 | 2026-11-auditoria-seguridad.md | Auditoría severa 2026-11-20: 2 hallazgos altos (imágenes sin digest pin; socket rootless en api/celery), 3 medios (swap/zram, firmas en --fix, entropía de frase), riesgos aceptados y 8 controles verificados en verde |
+| 2026-11-26-auditoria-repo.md | Auditoría completa del repo 2026-11-26: 20 fallos corregidos (1 crítico de pérdida de datos al cerrar, 7 altos), lo pendiente por orden de riesgo y qué se pudo y no se pudo verificar |
