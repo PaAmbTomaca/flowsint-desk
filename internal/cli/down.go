@@ -36,19 +36,24 @@ siguiente "up", y suelta el bloqueo del almacén.`,
 		if err != nil || !sess.Alive() {
 			return cleanDead(runDir, sess)
 		}
+		// marcador de "snapshot final fallido" que pudiera quedar de un intento
+		// anterior: solo cuenta si `up` lo vuelve a escribir tras esta orden
+		var marcaPrevia time.Time
+		if st, err := os.Stat(finalFailedMarker(runDir)); err == nil {
+			marcaPrevia = st.ModTime()
+		}
 		fmt.Printf("· enviando SIGTERM a pid %d (puerto %d)...\n", sess.PID, sess.Port)
 		if err := syscall.Kill(sess.PID, syscall.SIGTERM); err != nil {
 			return err
 		}
 		// el snapshot final de un grafo grande sobre pCloud puede tardar
-		pedido := time.Now()
-		deadline := pedido.Add(5 * time.Minute)
+		deadline := time.Now().Add(5 * time.Minute)
 		for time.Now().Before(deadline) {
 			if !sess.Alive() {
 				fmt.Println("✔ sesión cerrada ordenadamente")
 				return nil
 			}
-			if st, err := os.Stat(finalFailedMarker(runDir)); err == nil && st.ModTime().After(pedido.Add(-time.Second)) {
+			if st, err := os.Stat(finalFailedMarker(runDir)); err == nil && st.ModTime().After(marcaPrevia) {
 				return fmt.Errorf("el snapshot final ha FALLADO y la sesión sigue abierta para no perder el trabajo sin guardar (mira la salida de `up` para ver la causa). "+
 					"Arréglalo y repite `flowsint-desk down`; para cerrar SIN guardar, repite `flowsint-desk down` antes de %s", closeGrace)
 			}
