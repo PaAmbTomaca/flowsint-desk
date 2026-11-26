@@ -17,6 +17,7 @@ echo "== distro: ${PRETTY_NAME:-$ID}"
 case "$ID" in
   debian|ubuntu) apt-get update -qq && apt-get install -y -qq ca-certificates >/dev/null ;;
   arch) pacman -Sy --noconfirm --needed archlinux-keyring >/dev/null ;;
+  fedora) dnf install -y -q util-linux shadow-utils >/dev/null ;;  # su y useradd no vienen en la imagen mínima
 esac
 
 useradd -m probe
