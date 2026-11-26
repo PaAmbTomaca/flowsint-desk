@@ -69,7 +69,8 @@ func Prompt(label string, minLen int) (string, error) {
 	} else {
 		line, err := stdinReader.ReadString('\n')
 		if err != nil && line == "" {
-			return "", err
+			fmt.Fprintln(os.Stderr)
+			return "", errors.New("no hay terminal ni frase por stdin: ejecuta el comando en una terminal (o guarda la frase en el llavero)")
 		}
 		p = strings.TrimRight(line, "\r\n")
 	}
