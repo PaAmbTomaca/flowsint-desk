@@ -60,13 +60,22 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 		}
 		// El almacén overlay queda montado dentro del namespace de montaje
 		// rootless: sin desmontarlo antes, rm falla con "resource busy".
+		// De paso se anota el pid del proceso "pause" de ESTA sesión (el que
+		// mantiene su user namespace; `podman unshare` lo crea si no existe):
+		// hay que matarlo al final o se queda vivo para siempre.
 		args := []string{"unshare", "sh", "-c",
-			`umount -l "$0/podman-data/root/overlay" 2>/dev/null; rm -rf "$@"`, parent}
+			`cat "$0/podman-data/tmp/pause.pid" 2>/dev/null; echo; umount -l "$0/podman-data/root/overlay" 2>/dev/null; rm -rf "$@" >&2`, parent}
 		var dirs []string
 		for _, s := range append(subs, "podman-data") {
 			dirs = append(dirs, filepath.Join(parent, s))
 		}
-		out, err := Run(env, "podman", append(args, dirs...)...)
+		cmd := exec.Command("podman", append(args, dirs...)...)
+		cmd.Env = env
+		var so, se bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &so, &se
+		err := cmd.Run()
+		killPause(strings.TrimSpace(so.String()))
+		out := se.String()
 		if err == nil {
 			return nil
 		}
@@ -91,6 +100,32 @@ func WipeSubdirs(env []string, parent string, subs ...string) error {
 		return fmt.Errorf("wipe de %v en %s: %v: %s", subs, parent, err, out)
 	}
 	return nil
+}
+
+// killPause mata el proceso pause de Podman cuyo pid se leyó del pause.pid de
+// la sesión. Solo si de verdad es un pause (catatonit o podman): nunca se
+// mata un pid a ciegas, y nunca el pause del Podman personal del usuario, que
+// tiene otro pidfile.
+func killPause(pidStr string) {
+	var pid int
+	if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil || pid <= 1 {
+		return
+	}
+	comm, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return
+	}
+	if c := strings.TrimSpace(string(comm)); c != "catatonit" && c != "podman" {
+		return
+	}
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	for i := 0; i < 20; i++ {
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err != nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
 }
 
 // Env devuelve el entorno para invocar docker apuntando SOLO al rootless.
