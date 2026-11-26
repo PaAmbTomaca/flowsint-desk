@@ -186,21 +186,26 @@ ofrece recordarla en el llavero. Los datos se recuperan con "up".`,
 	},
 }
 
-// finishInit deja la frase en tmpfs para que el primer `up` de este arranque
-// no la vuelva a pedir (se borra con el directorio de ejecución al cerrar la
-// sesión o al apagar) y ofrece recordarla en el llavero.
+// finishInit ofrece recordar la frase en el llavero. Solo si NO queda en el
+// llavero se deja una copia en tmpfs (0600) para que el primer `up` de este
+// arranque no la vuelva a pedir; se borra con el directorio de ejecución al
+// cerrar la sesión o al apagar. Con llavero no hace falta tener la frase en
+// claro en RAM sin ninguna sesión abierta.
 func finishInit(runDir, pass string) error {
-	if err := os.WriteFile(filepath.Join(runDir, "passphrase"), []byte(pass), 0o600); err != nil {
+	pf := filepath.Join(runDir, "passphrase")
+	if save, _ := passphrase.AskSaveKeyring(); save {
+		if err := passphrase.SaveKeyring(pass); err == nil {
+			_ = os.Remove(pf)
+			fmt.Println("✔ frase recordada en el llavero del sistema (Secret Service)")
+			return nil
+		} else {
+			fmt.Fprintln(os.Stderr, "aviso: no se pudo guardar en el llavero:", err)
+		}
+	}
+	if err := os.WriteFile(pf, []byte(pass), 0o600); err != nil {
 		return err
 	}
 	fmt.Println("✔ frase de paso en tmpfs (0600) hasta el próximo `up`/apagado")
-	if save, _ := passphrase.AskSaveKeyring(); save {
-		if err := passphrase.SaveKeyring(pass); err != nil {
-			fmt.Fprintln(os.Stderr, "aviso: no se pudo guardar en el llavero:", err)
-		} else {
-			fmt.Println("✔ frase recordada en el llavero del sistema (Secret Service)")
-		}
-	}
 	return nil
 }
 
