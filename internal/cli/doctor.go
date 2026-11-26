@@ -264,7 +264,7 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 					return true, "sin bloqueo activo"
 				}
 				hb, _ := time.Parse(time.RFC3339, l.Heartbeat)
-				if l.Host == host {
+				if lock.IsLocal(l, host) {
 					return true, fmt.Sprintf("de esta máquina (pid %d)", l.PID)
 				}
 				if time.Since(hb) < lock.StaleMinutes*time.Minute {

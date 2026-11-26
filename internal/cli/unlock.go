@@ -33,7 +33,7 @@ var unlockCmd = &cobra.Command{
 		fmt.Printf("bloqueo actual: host=%s pid=%d boot=%s latido hace %s (%s)\n",
 			l.Host, l.PID, l.BootID[:8], time.Since(hb).Round(time.Second),
 			map[bool]string{true: "CADUCADO", false: "reciente"}[stale])
-		if l.Host == host {
+		if lock.IsLocal(l, host) {
 			return fmt.Errorf("el bloqueo es de ESTE host (pid %d); si la sesión murió, el siguiente `up` lo limpia solo", l.PID)
 		}
 		if !stale && !unlockForce {

@@ -5,15 +5,23 @@
 package lock
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 type Lock struct {
-	Host      string `json:"host"`
+	Host string `json:"host"`
+	// Machine identifica la instalación (hash de /etc/machine-id): dos equipos
+	// pueden llamarse igual (p. ej. el hostname por defecto de la distro) y
+	// entonces el host solo no distingue torre de portátil. Vacío en bloqueos
+	// escritos por versiones anteriores.
+	Machine   string `json:"equipo,omitempty"`
 	PID       int    `json:"pid"`
 	BootID    string `json:"boot_id"`
 	Started   string `json:"iniciado"` // RFC3339
@@ -38,26 +46,70 @@ func Read(vault string) (*Lock, error) {
 // considera vivo (fase 3: 15 min).
 const StaleMinutes = 15
 
-// Acquire toma el bloqueo. Falla si hay un bloqueo de OTRO host con latido
-// reciente (sugiere unlock --force si está caducado).
-func Acquire(vault, host string, pid int, bootID string) error {
-	if old, err := Read(vault); err == nil {
-		if old.Host != host {
-			hb, _ := time.Parse(time.RFC3339, old.Heartbeat)
-			if time.Since(hb) < StaleMinutes*time.Minute {
-				return fmt.Errorf("almacén bloqueado por otro equipo: host=%s pid=%d latido hace %s — espera o `flowsint-desk unlock --force`",
-					old.Host, old.PID, time.Since(hb).Round(time.Second))
+// machineID devuelve un identificador estable de ESTA instalación: sha256 de
+// /etc/machine-id truncado (el fichero de bloqueo lo ve pCloud: no se publica
+// el machine-id en crudo). "" si no se puede leer. Variable para los tests.
+var machineID = func() string {
+	for _, p := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
+		if b, err := os.ReadFile(p); err == nil {
+			if id := strings.TrimSpace(string(b)); id != "" {
+				h := sha256.Sum256([]byte("flowsint-desk:" + id))
+				return hex.EncodeToString(h[:8])
 			}
-			return fmt.Errorf("hay un bloqueo CADUCADO de otro host (%s, latido hace %s) — usa `flowsint-desk unlock --force`", old.Host, time.Since(hb).Round(time.Second))
 		}
 	}
-	l := &Lock{
-		Host: host, PID: pid, BootID: bootID,
-		Started:   time.Now().UTC().Format(time.RFC3339),
-		Heartbeat: time.Now().UTC().Format(time.RFC3339),
+	return ""
+}
+
+// IsLocal dice si el bloqueo l pertenece a ESTE equipo: mismo host y, cuando
+// ambos lados conocen su identificador de máquina, también el mismo.
+func IsLocal(l *Lock, host string) bool {
+	if l == nil || l.Host != host {
+		return false
 	}
-	b, _ := json.MarshalIndent(l, "", "  ")
+	mine := machineID()
+	return l.Machine == "" || mine == "" || l.Machine == mine
+}
+
+// write guarda el bloqueo de forma atómica (temporal + rename): un fichero a
+// medio escribir se leería como "sin bloqueo" desde el otro equipo. Si el
+// rename falla (FUSE raro), cae a la escritura directa.
+func write(vault string, l *Lock) error {
+	b, err := json.MarshalIndent(l, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := Path(vault) + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err == nil {
+		if err := os.Rename(tmp, Path(vault)); err == nil {
+			return nil
+		}
+		_ = os.Remove(tmp)
+	}
 	return os.WriteFile(Path(vault), b, 0o600)
+}
+
+// Acquire toma el bloqueo. Falla si hay un bloqueo de OTRO equipo, sea con
+// latido reciente (espera) o caducado (sugiere unlock --force).
+func Acquire(vault, host string, pid int, bootID string) error {
+	if old, err := Read(vault); err == nil && !IsLocal(old, host) {
+		quien := "host=" + old.Host
+		if old.Host == host {
+			quien += " (OTRO equipo con el mismo nombre de host)"
+		}
+		hb, _ := time.Parse(time.RFC3339, old.Heartbeat)
+		edad := time.Since(hb).Round(time.Second)
+		if time.Since(hb) < StaleMinutes*time.Minute {
+			return fmt.Errorf("almacén bloqueado por otro equipo: %s pid=%d latido hace %s — espera o `flowsint-desk unlock --force`",
+				quien, old.PID, edad)
+		}
+		return fmt.Errorf("hay un bloqueo CADUCADO de otro equipo (%s, latido hace %s) — usa `flowsint-desk unlock --force`", quien, edad)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	return write(vault, &Lock{
+		Host: host, Machine: machineID(), PID: pid, BootID: bootID,
+		Started: now, Heartbeat: now,
+	})
 }
 
 // Touch renueva el latido (solo si el bloqueo es nuestro).
@@ -66,12 +118,11 @@ func Touch(vault, host string, pid int) error {
 	if err != nil {
 		return err
 	}
-	if l.Host != host || l.PID != pid {
+	if !IsLocal(l, host) || l.PID != pid {
 		return fmt.Errorf("el bloqueo ya no es nuestro (ahora: host=%s pid=%d)", l.Host, l.PID)
 	}
 	l.Heartbeat = time.Now().UTC().Format(time.RFC3339)
-	b, _ := json.MarshalIndent(l, "", "  ")
-	return os.WriteFile(Path(vault), b, 0o600)
+	return write(vault, l)
 }
 
 // Mine comprueba si el bloqueo actual es nuestro.
@@ -80,7 +131,7 @@ func Mine(vault, host string, pid int) bool {
 	if err != nil {
 		return false
 	}
-	return l.Host == host && l.PID == pid
+	return IsLocal(l, host) && l.PID == pid
 }
 
 // Release suelta el bloqueo (solo si es nuestro).
