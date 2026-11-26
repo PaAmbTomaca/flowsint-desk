@@ -8,6 +8,7 @@ import (
 
 	"flowsint-desk/internal/config"
 	"flowsint-desk/internal/passphrase"
+	"flowsint-desk/internal/run"
 	"flowsint-desk/internal/session"
 	"flowsint-desk/internal/store"
 )
@@ -107,11 +108,43 @@ func openStore(cfg *config.Config, runDir string) (store.Env, func(), error) {
 		}
 	}
 	propio := filepath.Join(runDir, fmt.Sprintf("restic-pass.%d", os.Getpid()))
-	limpiar := func() { _ = os.Remove(propio) }
+	limpiar := func() {
+		_ = os.Remove(propio)
+		tidyRunDir(runDir)
+	}
 	se, err := unlockStore(cfg, runDir, propio)
 	if err != nil {
 		limpiar()
 		return se, nada, err
 	}
 	return se, limpiar, nil
+}
+
+// tidyRunDir borra el directorio de ejecución si lo único que contiene es lo
+// que deja un comando de consulta (subdirectorios vacíos y la caché de
+// restic, que es metadato cifrado del repo). No toca nada si hay sesión, ni
+// si queda cualquier otra cosa: la frase que `init` deja para el primer `up`,
+// secretos, un socket o restos de una sesión.
+func tidyRunDir(runDir string) {
+	if s, err := session.Read(runDir); err == nil && s.Alive() {
+		return
+	}
+	entries, err := os.ReadDir(runDir)
+	if err != nil {
+		return
+	}
+	vaciables := map[string]bool{"rk-state": true, "dockerd-data": true, "dockerd-exec": true, "stack": true,
+		"neo4j-import": true, "staging": true, "restore": true}
+	for _, e := range entries {
+		switch {
+		case e.Name() == "restic-cache":
+		case e.IsDir() && vaciables[e.Name()]:
+			if sub, err := os.ReadDir(filepath.Join(runDir, e.Name())); err != nil || len(sub) > 0 {
+				return
+			}
+		default:
+			return
+		}
+	}
+	_ = run.Cleanup(runDir)
 }
