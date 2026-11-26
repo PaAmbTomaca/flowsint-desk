@@ -345,3 +345,32 @@ func lastLines(s string, n int) string {
 	}
 	return strings.Join(l, "\n")
 }
+
+// Mirror copia todos los snapshots del repositorio de e a otro repositorio
+// restic en dest (segunda copia, misma frase de paso). Si dest no existe lo
+// crea con los mismos parámetros de troceado, para que la copia deduplique.
+// Es incremental: repetirlo solo copia lo nuevo.
+func Mirror(e Env, dest string) (creado bool, err error) {
+	d := Env{Repo: dest, PassFile: e.PassFile, CacheDir: e.CacheDir}
+	from := []string{"--from-repo", e.Repo, "--from-password-file", e.PassFile}
+	if _, serr := os.Stat(filepath.Join(dest, "config")); serr != nil {
+		if err := os.MkdirAll(dest, 0o700); err != nil {
+			return false, err
+		}
+		args := append([]string{"init", "--copy-chunker-params"}, from...)
+		if _, stderr, err := run(d, args...); err != nil {
+			return false, fmt.Errorf("creando la segunda copia en %s: %v: %s", dest, err, strings.TrimSpace(stderr))
+		}
+		creado = true
+	}
+	if _, stderr, err := run(d, append([]string{"copy"}, from...)...); err != nil {
+		return creado, fmt.Errorf("restic copy a %s: %v: %s", dest, err, strings.TrimSpace(stderr))
+	}
+	return creado, nil
+}
+
+// CountSnapshots: cuántos snapshots hay en el repositorio repo (misma frase).
+func CountSnapshots(e Env, repo string) (int, error) {
+	s, err := Snapshots(Env{Repo: repo, PassFile: e.PassFile, CacheDir: e.CacheDir})
+	return len(s), err
+}

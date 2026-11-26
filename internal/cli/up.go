@@ -184,6 +184,21 @@ var upCmd = &cobra.Command{
 		armado.Store(true)
 		fmt.Println("✔ sin bloqueo de otro equipo · bloqueo tomado por", host)
 		defer lock.Release(cfg.VaultPath, host, os.Getpid())
+		// 4b. integridad del almacén, cada verify_every_days: una copia que no se
+		//     comprueba no es una copia. Si falla NO se impide arrancar (los
+		//     datos hacen falta), pero se avisa a gritos.
+		if cfg.VerifyDue() {
+			fmt.Printf("· comprobando la integridad del almacén (cada %d días)...\n", cfg.VerifyEveryDays)
+			if err := store.Check(se); err != nil {
+				fmt.Fprintf(os.Stderr, "✖ ¡ATENCIÓN! el almacén NO pasa la comprobación de integridad:\n  %s\n"+
+					"  Se continúa para que puedas acceder a tus datos, pero NO te fíes de esta copia:\n"+
+					"  ejecuta `flowsint-desk verify`, y si tienes segunda copia (`flowsint-desk mirror`), consérvala.\n",
+					redactText(err.Error(), redactVals))
+			} else {
+				_ = config.MarkVerified()
+				fmt.Println("✔ almacén íntegro")
+			}
+		}
 		// 5. snapshot a restaurar: PRIMERO recuperar los secretos del snapshot
 		//    (antes de crear los contenedores: si no, neo4j crea auth.ini con el
 		//    pass provisional y luego el healthcheck falla al cambiar el env)
@@ -453,6 +468,12 @@ var upCmd = &cobra.Command{
 					}
 					fmt.Fprintf(os.Stderr, "⚠ el snapshot final ha vuelto a fallar (%v): se cierra SIN guardar, como has pedido. Vale el último snapshot bueno (hace %s).\n",
 						err, time.Since(ultimoBueno).Round(time.Second))
+				}
+				// segunda copia, si está configurada y el disco está conectado
+				if cfg.MirrorPath != "" && mirrorDestOK(cfg.VaultPath, cfg.MirrorPath) == nil {
+					if err := doMirror(se, cfg.MirrorPath); err != nil {
+						fmt.Fprintln(os.Stderr, "aviso: no se pudo actualizar la segunda copia:", redactText(err.Error(), redactVals))
+					}
 				}
 				teardown(runDir, env)
 				return nil

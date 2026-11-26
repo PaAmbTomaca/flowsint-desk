@@ -44,6 +44,7 @@ almacén desechable) o el propio "up", que verifica los recuentos al restaurar.`
 		if err := store.Check(se); err != nil {
 			return err
 		}
+		_ = config.MarkVerified()
 		fmt.Println("✔ repositorio íntegro")
 		snaps, err := store.Snapshots(se)
 		if err != nil {

@@ -45,6 +45,25 @@ var statusCmd = &cobra.Command{
 		} else {
 			fmt.Println("bloqueo: ninguno")
 		}
+		// salud de las copias
+		edad := func(ts string) string {
+			t, err := time.Parse(time.RFC3339, ts)
+			if err != nil {
+				return "nunca"
+			}
+			return "hace " + time.Since(t).Round(time.Hour).String()
+		}
+		fmt.Printf("integridad del almacén: comprobada %s", edad(cfg.LastVerify))
+		if cfg.VerifyEveryDays > 0 {
+			fmt.Printf(" (se comprueba sola cada %d días al arrancar)\n", cfg.VerifyEveryDays)
+		} else {
+			fmt.Println(" (comprobación automática desactivada)")
+		}
+		if cfg.MirrorPath != "" {
+			fmt.Printf("segunda copia: %s, actualizada %s\n", cfg.MirrorPath, edad(cfg.LastMirror))
+		} else {
+			fmt.Println("segunda copia: ninguna (todo depende del almacén; ver `flowsint-desk mirror`)")
+		}
 		// último snapshot
 		runDir2, err := run.Ensure()
 		if err == nil {

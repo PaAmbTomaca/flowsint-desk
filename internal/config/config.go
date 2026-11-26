@@ -35,6 +35,14 @@ type Config struct {
 	// "podman" (Podman rootless, sin daemon). Se elige en `setup`; para cambiar
 	// después: `flowsint-desk engine <otro>`.
 	Engine string `toml:"engine"`
+	// MirrorPath: segunda copia del almacén (otro repo restic, p. ej. en un
+	// disco externo). Vacío = sin segunda copia. Se rellena con `mirror --to`.
+	MirrorPath string `toml:"mirror_path"`
+	// VerifyEveryDays: cada cuántos días `up` comprueba la integridad del
+	// almacén (restic check). 0 = nunca.
+	VerifyEveryDays int    `toml:"verify_every_days"`
+	LastVerify      string `toml:"last_verify"` // RFC3339 de la última comprobación correcta
+	LastMirror      string `toml:"last_mirror"` // RFC3339 de la última segunda copia correcta
 }
 
 var validTag = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
@@ -51,6 +59,7 @@ func Default() *Config {
 		DockerSocket:    sockproxy.ModeFiltered,
 		FlowsintVersion: "latest",
 		Engine:          dock.EngineDocker,
+		VerifyEveryDays: 7,
 	}
 }
 
@@ -123,6 +132,9 @@ func (c *Config) Validate() error {
 	if c.SaveIntervalMin < 1 {
 		return fmt.Errorf("save_interval_min = %d no vale: mínimo 1 minuto", c.SaveIntervalMin)
 	}
+	if c.VerifyEveryDays < 0 {
+		return fmt.Errorf("verify_every_days no puede ser negativo (0 = no comprobar nunca)")
+	}
 	if !dock.ValidEngine(c.Engine) {
 		return fmt.Errorf("engine = %q no vale: usa \"docker\" o \"podman\"", c.Engine)
 	}
@@ -167,6 +179,32 @@ func (c *Config) ForgetDue() bool {
 	}
 	return time.Since(t) > 24*time.Hour
 }
+
+// VerifyDue: toca comprobar la integridad del almacén.
+func (c *Config) VerifyDue() bool {
+	if c.VerifyEveryDays <= 0 {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, c.LastVerify)
+	return err != nil || time.Since(t) > time.Duration(c.VerifyEveryDays)*24*time.Hour
+}
+
+// Update relee config.toml, aplica el cambio y lo guarda: así una sesión
+// larga no pisa lo que el usuario haya editado a mano mientras tanto.
+func Update(change func(c *Config)) error {
+	c, err := Load()
+	if err != nil {
+		return err
+	}
+	change(c)
+	return c.Save()
+}
+
+func now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// MarkVerified / MarkMirrored anotan (en disco) la última vez que fue bien.
+func MarkVerified() error { return Update(func(c *Config) { c.LastVerify = now() }) }
+func MarkMirrored() error { return Update(func(c *Config) { c.LastMirror = now() }) }
 
 func (c *Config) MarkForgotten() {
 	c.LastForget = time.Now().UTC().Format(time.RFC3339)
