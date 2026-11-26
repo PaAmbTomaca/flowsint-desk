@@ -49,7 +49,7 @@ var upCmd = &cobra.Command{
 		var staleDirs []string
 		var redactVals []string // valores a enmascarar (***) en avisos y logs
 		// daemons huérfanos cuyo socket ya no es alcanzable (dir renombrado):
-		if k := dock.KillOrphanDaemons(); len(k) > 0 {
+		if k := dock.KillOrphanDaemons("/tmp/flowsint-desk-"); len(k) > 0 {
 			fmt.Printf("· daemons rootless huérfanos eliminados (pids %v)\n", k)
 		}
 		limpiarDir := func(dir string) {

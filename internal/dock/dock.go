@@ -182,29 +182,55 @@ func StartDaemon(runDir string) error {
 	cmd.Stdout = logF
 	cmd.Stderr = logF
 	if err := cmd.Start(); err != nil {
+		_ = logF.Close()
 		return fmt.Errorf("arrancando dockerd-rootless.sh: %w (¿está en PATH o ~/.local/bin?)", err)
 	}
-	// esperar a que el socket responda (hasta 90 s)
+	_ = logF.Close() // el hijo conserva su copia del descriptor
+	// Wait en segundo plano: sin él ProcessState nunca se rellena y una muerte
+	// inmediata del daemon no se detectaba hasta agotar los 90 s.
+	muerto := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(muerto) }()
+	// El log vive en el directorio de ejecución, que se borra si el arranque
+	// falla: el error se lleva las últimas líneas (no contienen secretos).
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		if Alive(env) {
 			return nil
 		}
-		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-			return fmt.Errorf("dockerd rootless terminó prematuramente; ver %s", logPath)
+		select {
+		case <-muerto:
+			return fmt.Errorf("dockerd rootless terminó prematuramente. Últimas líneas de su log:\n%s", tailFile(logPath, 25))
+		case <-time.After(1 * time.Second):
 		}
-		time.Sleep(1 * time.Second)
 	}
-	return fmt.Errorf("el daemon rootless no respondió en 90 s; ver %s", logPath)
+	return fmt.Errorf("el daemon rootless no respondió en 90 s. Últimas líneas de su log:\n%s", tailFile(logPath, 25))
+}
+
+// tailFile devuelve las últimas n líneas de un fichero de texto pequeño.
+func tailFile(path string, n int) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "(no se pudo leer " + path + ")"
+	}
+	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // KillOrphanDaemons mata (por pid, NUNCA pkill -f) cualquier proceso cuyo
-// cmdline contenga "/tmp/flowsint-desk-" excepto el nuestro: son daemons
-// rootless huérfanos de sesiones anteriores (kill -9) cuyo socket ya no
-// es alcanzable por path (el dir pudo renombrarse a .stale).
-func KillOrphanDaemons() []int {
+// cmdline contenga match, excepto el nuestro: son daemons rootless huérfanos
+// (dockerd, rootlesskit, slirp4netns, containerd...) de una sesión que murió
+// o que se está desmontando. match debe ser una ruta de directorio de
+// ejecución: "/tmp/flowsint-desk-" para cualquier sesión, o la de una
+// concreta. Devuelve solo los pids a los que se pudo enviar la señal.
+func KillOrphanDaemons(match string) []int {
 	self := os.Getpid()
 	var killed []int
+	if match == "" {
+		return killed
+	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return killed
@@ -221,9 +247,10 @@ func KillOrphanDaemons() []int {
 		if err != nil {
 			continue
 		}
-		if strings.Contains(string(cmdline), "/tmp/flowsint-desk-") {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
-			killed = append(killed, pid)
+		if strings.Contains(string(cmdline), match) {
+			if syscall.Kill(pid, syscall.SIGTERM) == nil {
+				killed = append(killed, pid)
+			}
 		}
 	}
 	if len(killed) > 0 {
