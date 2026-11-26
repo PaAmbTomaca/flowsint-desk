@@ -95,8 +95,10 @@ paso de `sudo`, que siempre queda para ti.)
 flowsint-desk doctor                          # todos los requisitos, con cómo arreglar cada uno
 flowsint-desk doctor --fix                    # arregla automáticamente lo que no requiera sudo
 flowsint-desk init --vault ~/pCloudDrive/flowsint-vault
-#   → pide la frase de paso dos veces (mín. 8 caracteres) y si la guardas en el
-#     llavero (Secret Service). El repo restic y el primer snapshot se crean ahí.
+#   → PRIMER equipo: pide la frase dos veces (mín. 8; avisa por debajo de 16),
+#     crea el repo restic y el primer snapshot, y ofrece el llavero.
+#   → SEGUNDO equipo (el almacén ya tiene snapshots): pide la frase una vez, la
+#     comprueba y NO crea ni modifica nada en el almacén.
 flowsint-desk up                              # desbloquea, restaura y abre la UI
 #   ✔ almacén desbloqueado · ✔ sin bloqueo de otro equipo · ✔ restaurado snapshot 3f2a…
 #   ✔ Flowsint listo en http://127.0.0.1:5273  (Ctrl+C para guardar y cerrar)
@@ -104,7 +106,7 @@ flowsint-desk status                          # sesión, bloqueo (host/latido), 
 flowsint-desk backup                          # snapshot inmediato de la sesión en marcha
 flowsint-desk snapshots                       # fecha, host, tamaño, recuentos del manifest
 flowsint-desk up --snapshot 3f2a9c…           # arrancar desde un snapshot antiguo
-flowsint-desk down                            # cierre ordenado de la sesión viva
+flowsint-desk down                            # cierre ordenado; si la sesión murió (kill -9), limpia sus restos
 flowsint-desk unlock --force                  # romper un bloqueo caducado de otro equipo
 flowsint-desk forget                          # retención (24 h cubiertas, 30 d, 12 m) + prune
 #   (keep-hourly=N de restic = N horas cubiertas, 1 snapshot por hora, más el
@@ -113,17 +115,25 @@ flowsint-desk passwd                          # cambiar la frase de paso
 flowsint-desk logs [--tail N] [filtro]        # logs de los contenedores de la sesión viva, saneados (secretos → ***)
 ```
 
-> Nota (varios almacenes / pruebas): la frase se resuelve en este orden:
-> `runDir/passphrase` (tmpfs) → llavero → prompt. Si el llavero guarda la frase
-> de OTRO almacén, `up` falla con "frase incorrecta" aunque la pases por stdin;
-> en ese caso repuebla `/tmp/flowsint-desk-<boot_id>/passphrase` (0600) antes de
-> arrancar o usa el almacén del llavero.
+> Nota: la frase se resuelve en este orden: `runDir/passphrase` (tmpfs, la deja
+> `init` hasta el primer `up`) → llavero → prompt. Si la guardada no abre el
+> almacén (llavero con la frase de otro almacén, o desfasado tras un `passwd`
+> hecho en el otro equipo), se pide por terminal en vez de fallar.
 
 En `up` queda en primer plano: guarda automáticamente cada 10 min (configurable),
 renueva el latido del bloqueo cada minuto y, con Ctrl+C/SIGTERM o al apagar el equipo
 (`systemd-inhibit --what=shutdown --mode=delay`), hace un **snapshot final** antes de
-tirar todo y borrar el directorio de ejecución. Si no da tiempo, vale el último
-snapshot automático.
+tirar todo y borrar el directorio de ejecución.
+
+**Si el snapshot final falla, la sesión NO se cierra** (pCloud desmontado, bloqueo
+perdido, error de restic...): cerrar borraría de la RAM lo único que queda del
+trabajo sin guardar. `up` dice qué ha fallado y hace cuánto fue el último snapshot
+bueno; arréglalo y repite Ctrl+C o `down`. Para cerrar **sin guardar**, repite la
+orden antes de 2 minutos. Al apagar el equipo no hay segunda oportunidad: si no da
+tiempo o pCloud ya se ha ido, vale el último snapshot automático.
+
+Un arranque que falla o que cancelas con Ctrl+C se desmonta entero (daemon,
+contenedores, secretos y volcados restaurados): no queda nada descifrado en RAM.
 
 ## Qué hay en un snapshot (cifrado por restic, solo en pCloud)
 
@@ -155,6 +165,11 @@ snapshot automático.
   (compose, restic, `docker logs`) se enmascaran los secretos y la frase (`***`);
   si falla el arranque, `up` vuelca automáticamente los logs de los contenedores
   implicados ya saneados, y `flowsint-desk logs` los muestra en vivo.
+- **Swap**: tmpfs puede paginarse a swap. Si tu swap está en disco y sin cifrar
+  (típico con hibernación), datos de la sesión pueden acabar en claro en el
+  disco. `doctor` avisa de cualquier swap que no sea zram; no hibernes con la
+  sesión abierta.
+- 🔎 **Auditoría completa del repo** (2026-11-26): [`docs/security/2026-11-26-auditoria-repo.md`](docs/security/2026-11-26-auditoria-repo.md) — 20 fallos corregidos (pérdida de datos al cerrar, `init` sobre un almacén existente, retención que no borraba, bloqueo con hostnames repetidos...) y lo que sigue pendiente.
 - 🛡 **Auditoría de seguridad severa** (2026-11-20): [`docs/security/2026-11-auditoria-seguridad.md`](docs/security/2026-11-auditoria-seguridad.md) — hallazgos con severidad, evidencia y mitigaciones (2 altos: imágenes sin pin de digest y socket rootless en api/celery; 3 medios; 8 controles verificados en verde).
 - Antes de escribir nada se comprueba con `statfs` que el directorio de ejecución
   está en tmpfs (`TMPFS_MAGIC`); si no, se niega.
@@ -199,4 +214,9 @@ pendientes** (p. ej. P001: Podman como backend opcional en v2).
 ```sh
 go build -o dist/flowsint-desk .
 go vet ./...
+go test ./...     # sin Docker ni restic: lógica de bloqueo, snapshots, config, saneado...
 ```
+
+Los tests unitarios no levantan nada; la batería de aceptación real (sección 7
+de `ENCARGO.md`) sigue siendo manual, contra Docker rootless y un almacén de
+prueba. CI (`.github/workflows/ci.yml`) ejecuta build + vet + test en cada push.

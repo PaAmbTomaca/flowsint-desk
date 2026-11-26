@@ -97,8 +97,10 @@ echo "$(whoami):100000:65536" | sudo tee -a /etc/subuid | sudo tee -a /etc/subgi
 flowsint-desk doctor                          # all requirements, with how to fix each one
 flowsint-desk doctor --fix                    # auto-fix what does not need sudo
 flowsint-desk init --vault ~/pCloudDrive/flowsint-vault
-#   → asks for the passphrase twice (min. 8 chars) and whether to store it in the
-#     keyring (Secret Service). The restic repo and the first snapshot are created there.
+#   → FIRST machine: asks for the passphrase twice (min. 8; warns below 16),
+#     creates the restic repo and the first snapshot, and offers the keyring.
+#   → SECOND machine (the vault already has snapshots): asks once, checks the
+#     passphrase and does NOT create or modify anything in the vault.
 flowsint-desk up                              # unlock, restore and open the UI
 #   ✔ vault unlocked · ✔ no lock from another machine · ✔ restored snapshot 3f2a…
 #   ✔ Flowsint ready at http://127.0.0.1:5273  (Ctrl+C to save and close)
@@ -106,7 +108,7 @@ flowsint-desk status                          # session, lock (host/heartbeat), 
 flowsint-desk backup                          # immediate snapshot of the running session
 flowsint-desk snapshots                       # date, host, size, manifest counts
 flowsint-desk up --snapshot 3f2a9c…           # start from an older snapshot
-flowsint-desk down                            # orderly shutdown of the live session
+flowsint-desk down                            # orderly shutdown; if the session died (kill -9), cleans up its leftovers
 flowsint-desk unlock --force                  # break a stale lock from another machine
 flowsint-desk forget                          # retention (24 h covered, 30 d, 12 m) + prune
 #   (restic keep-hourly=N = N hours covered, 1 snapshot per hour, plus the
@@ -115,18 +117,25 @@ flowsint-desk passwd                          # change the passphrase
 flowsint-desk logs [--tail N] [filter]        # logs of the live session's containers, sanitized (secrets → ***)
 ```
 
-> Note (several vaults / tests): the passphrase is resolved in this order:
-> `runDir/passphrase` (tmpfs) → keyring → prompt. If the keyring holds the
-> passphrase of ANOTHER vault, `up` fails with "wrong passphrase" even if you pipe
-> the right one on stdin; in that case repopulate
-> `/tmp/flowsint-desk-<boot_id>/passphrase` (0600) before starting, or use the
-> vault the keyring belongs to.
+> Note: the passphrase is resolved in this order: `runDir/passphrase` (tmpfs,
+> left by `init` until the first `up`) → keyring → prompt. If the stored one does
+> not open the vault (keyring holding another vault's passphrase, or stale after a
+> `passwd` run on the other machine), you are prompted instead of failing.
 
 `up` stays in the foreground: it saves automatically every 10 min (configurable),
 renews the lock heartbeat every minute and, on Ctrl+C/SIGTERM or at system
 shutdown (`systemd-inhibit --what=shutdown --mode=delay`), takes a **final
-snapshot** before tearing everything down and deleting the run directory. If
-there is no time, the last automatic snapshot stands.
+snapshot** before tearing everything down and deleting the run directory.
+
+**If the final snapshot fails, the session is NOT closed** (pCloud unmounted,
+lock lost, restic error...): closing would wipe from RAM the only copy of the
+unsaved work. `up` reports what failed and how old the last good snapshot is;
+fix it and repeat Ctrl+C or `down`. To close **without saving**, repeat the
+request within 2 minutes. At system shutdown there is no second chance: if
+there is no time or pCloud is already gone, the last automatic snapshot stands.
+
+A startup that fails or that you cancel with Ctrl+C is torn down completely
+(daemon, containers, restored secrets and dumps): nothing decrypted stays in RAM.
 
 ## What a snapshot contains (encrypted by restic, only in pCloud)
 
@@ -157,6 +166,11 @@ there is no time, the last automatic snapshot stands.
   non-compromising**: any external output (compose, restic, `docker logs`) is
   masked first (secrets and passphrase → `***`); if startup fails, `up` dumps the
   involved containers' logs already sanitized, and `flowsint-desk logs` shows them live.
+- **Swap**: tmpfs can be paged out to swap. If your swap is on disk and
+  unencrypted (typical with hibernation), session data may end up in clear on
+  disk. `doctor` warns about any non-zram swap; do not hibernate with the
+  session open.
+- 🔎 **Full repo audit** (2026-11-26): [`docs/security/2026-11-26-auditoria-repo.md`](docs/security/2026-11-26-auditoria-repo.md) (Spanish) — 20 bugs fixed (data loss on close, `init` on an existing vault, retention that deleted nothing, lock with duplicate hostnames...) and what is still open.
 - 🛡 **Severe security audit** (2026-11-20): [`docs/security/2026-11-auditoria-seguridad.md`](docs/security/2026-11-auditoria-seguridad.md) — findings with severity, evidence and mitigations (2 high: images without digest pin and rootless socket mounted in api/celery; 3 medium; 8 controls verified green).
 - The passphrase
   reaches restic via `RESTIC_PASSWORD_FILE` (a 0600 file in tmpfs, deleted at
@@ -205,4 +219,9 @@ proposals** (e.g. P001: Podman as an optional backend in v2).
 ```sh
 go build -o dist/flowsint-desk .
 go vet ./...
+go test ./...     # no Docker or restic needed: lock, snapshot, config, redaction logic...
 ```
+
+Unit tests start nothing; the real acceptance battery (section 7 of
+`ENCARGO.md`) is still manual, against rootless Docker and a test vault.
+CI (`.github/workflows/ci.yml`) runs build + vet + test on every push.
