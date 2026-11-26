@@ -668,12 +668,12 @@ func autoArchBin(bin string) func() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		bin, err := dearmor(kb)
+		krBin, err := dearmor(kb)
 		if err != nil {
 			return "", fmt.Errorf("no se pudo leer el llavero de paquetes %s: %w", archKeyring, err)
 		}
 		kr := filepath.Join(tmp, "arch-keyring.gpg")
-		if err := os.WriteFile(kr, bin, 0o600); err != nil {
+		if err := os.WriteFile(kr, krBin, 0o600); err != nil {
 			return "", err
 		}
 		if out, err := exec.Command("gpgv", "--keyring", kr, pf+".sig", pf).CombinedOutput(); err != nil {
