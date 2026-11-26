@@ -248,6 +248,11 @@ func Dump(e Env, id, path string) (string, error) {
 // Forget aplica retención y (opcional) prune.
 func Forget(e Env, keepHourly, keepDaily, keepMonthly int, prune bool) (string, error) {
 	args := []string{"forget",
+		// Sin agrupar: restic agrupa por host+paths por defecto y la ruta del
+		// staging lleva el boot_id, así que cada arranque sería un grupo propio
+		// con su propia cuota de retención (el repo no dejaría de crecer).
+		// El almacén es UN solo conjunto de datos visto desde varios equipos.
+		"--group-by", "",
 		fmt.Sprintf("--keep-hourly=%d", keepHourly),
 		fmt.Sprintf("--keep-daily=%d", keepDaily),
 		fmt.Sprintf("--keep-monthly=%d", keepMonthly),
