@@ -68,17 +68,40 @@ Añadido a la CLI: asistente `setup` de principio a fin (requisitos por
 distribución Debian/Arch, detección de pCloud, primer/segundo equipo, imágenes,
 prueba), `selftest`, `verify`, `images`, `version`.
 
+## Validado en real (tercera tanda, mismo día)
+
+El límite que encabeza este documento ("sin Docker ni restic reales") dejó de
+ser cierto para el flujo principal: el CI ejecuta ahora, en runners de GitHub
+con software auténtico, tres cosas.
+
+| Qué | Dónde | Resultado |
+|-----|-------|-----------|
+| Ciclo completo: asistente `setup` en equipo nuevo + prueba de humo (crear almacén, arrancar Flowsint, registrar usuario, snapshot, cerrar, restaurar, volver a entrar, cerrar), y después nada en `/tmp` ni ningún proceso del motor vivo | job `e2e`, Ubuntu, **Docker rootless** y **Podman 5.7** | ✔ los dos |
+| `doctor --fix` en sistema pelado (restic contra `SHA256SUMS`; en Arch, binarios con firma), instalar la línea de `doctor --packages` y exigir requisitos en verde | job `distro`, contenedores de **Arch, Debian 13 y Fedora 45** | ✔ los tres |
+| build + vet + test + gofmt | job `go` | ✔ |
+
+Eso da por comprobados contra restic y contenedores reales, entre otros: el
+parseo de `backup --json`, `forget` con `--group-by ""`, el volcado de Postgres,
+el restore con verificación de manifest, el cierre con snapshot final y el
+desmontaje. Probar en real destapó además dos fallos propios (llavero de Arch en
+ASCII; proceso *pause* de Podman vivo tras cerrar), ya corregidos.
+
+Se añadió también **Podman como segundo motor**, elegible en `setup`
+(`docs/decisions/0008-two-container-engines.md`).
+
 ## Sigue pendiente
 
-1. **Validar en real**, por este orden: `flowsint-desk selftest`; la batería de
-   `ENCARGO.md` §7; un enricher (subfinder) con `docker_socket = "filtrado"`;
-   `forget` con `--dry-run` de restic; apagar el equipo con una sesión abierta.
+1. **Validar en TU máquina** (el CI no es un escritorio): `flowsint-desk
+   selftest`; un enricher (subfinder) con `docker_socket = "filtrado"` —lo único
+   del flujo que no se ha ejecutado nunca—; apagar el equipo con una sesión
+   abierta; pCloud y llavero reales; los casos de la batería §7 que el CI no
+   cubre (segundo equipo, `kill -9`, frase incorrecta: probados solo con dobles).
 2. Los nombres de paquete de Debian que sugiere `doctor` (uidmap, rootlesskit,
    slirp4netns, fuse-overlayfs, docker.io, docker-compose) no se han probado en
    una Debian 13.
 3. `Session.Alive()` solo mira el pid (reutilización de pid tras un kill -9,
    improbable).
-4. Podman como segundo backend: `docs/research/2026-11-26-podman-reanalisis.md`.
+4. Podman 6.x (Arch, Fedora) y 5.4 (Debian): el CI probó 5.7. SELinux en Fedora.
 
 ## Cómo reproducir las comprobaciones
 
