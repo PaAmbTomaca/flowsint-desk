@@ -26,10 +26,11 @@ var passwdCmd = &cobra.Command{
 			return err
 		}
 		// frase actual (valida contra el repo antes de cambiar nada)
-		se, err := mustStoreEnv(cfg, runDir)
+		se, limpiar, err := openStore(cfg, runDir)
 		if err != nil {
 			return err
 		}
+		defer limpiar()
 		fmt.Println("✔ frase actual correcta")
 		nueva, err := passphrase.PromptTwice(8)
 		if err != nil {

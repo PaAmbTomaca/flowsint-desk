@@ -46,7 +46,8 @@ var statusCmd = &cobra.Command{
 		// último snapshot
 		runDir2, err := run.Ensure()
 		if err == nil {
-			if se, err := mustStoreEnv(cfg, runDir2); err == nil {
+			if se, limpiar, err := openStore(cfg, runDir2); err == nil {
+				defer limpiar()
 				if snaps, err := store.Snapshots(se); err == nil && len(snaps) > 0 {
 					last := snaps[len(snaps)-1]
 					fmt.Printf("último snapshot: %s (%s, host %s, %.1f MiB, tags %v)\n",

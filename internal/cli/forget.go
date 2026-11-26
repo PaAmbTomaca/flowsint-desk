@@ -23,10 +23,11 @@ var forgetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		se, err := mustStoreEnv(cfg, runDir)
+		se, limpiar, err := openStore(cfg, runDir)
 		if err != nil {
 			return err
 		}
+		defer limpiar()
 		fmt.Printf("· retención: keep-hourly=%d keep-daily=%d keep-monthly=%d + prune\n",
 			cfg.KeepHourly, cfg.KeepDaily, cfg.KeepMonthly)
 		out, err := store.Forget(se, cfg.KeepHourly, cfg.KeepDaily, cfg.KeepMonthly, true)

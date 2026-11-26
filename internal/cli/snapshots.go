@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"syscall"
 	"time"
 
 	"flowsint-desk/internal/config"
 	"flowsint-desk/internal/run"
+	"flowsint-desk/internal/session"
 	"flowsint-desk/internal/snap"
 	"flowsint-desk/internal/store"
 
@@ -26,17 +28,18 @@ var backupCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		sess, err := sessionRead(runDir)
+		sess, err := session.Read(runDir)
 		if err != nil || !sess.Alive() {
 			return fmt.Errorf("no hay ninguna sesión `up` viva")
 		}
-		se, err := mustStoreEnv(cfg, runDir)
+		se, limpiar, err := openStore(cfg, runDir)
 		if err != nil {
 			return err
 		}
+		defer limpiar()
 		before, _ := store.Latest(se)
 		fmt.Printf("· pidiendo snapshot a pid %d...\n", sess.PID)
-		if err := syscallKill(sess.PID); err != nil {
+		if err := syscall.Kill(sess.PID, syscall.SIGUSR1); err != nil {
 			return err
 		}
 		deadline := time.Now().Add(180 * time.Second)
@@ -64,10 +67,11 @@ var snapshotsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		se, err := mustStoreEnv(cfg, runDir)
+		se, limpiar, err := openStore(cfg, runDir)
 		if err != nil {
 			return err
 		}
+		defer limpiar()
 		snaps, err := store.Snapshots(se)
 		if err != nil {
 			return err

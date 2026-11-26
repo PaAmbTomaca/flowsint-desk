@@ -10,6 +10,7 @@ import (
 	"flowsint-desk/internal/dock"
 	"flowsint-desk/internal/run"
 	"flowsint-desk/internal/secrets"
+	"flowsint-desk/internal/session"
 
 	"github.com/spf13/cobra"
 )
@@ -99,7 +100,7 @@ nombre lo contenga (p. ej. "logs api" -> flowsint-desk-api).`,
 		if err != nil {
 			return err
 		}
-		sess, err := sessionRead(runDir)
+		sess, err := session.Read(runDir)
 		if err != nil || !sess.Alive() {
 			return fmt.Errorf("no hay ninguna sesion 'up' viva (mira 'flowsint-desk status')")
 		}
