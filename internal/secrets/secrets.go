@@ -46,13 +46,13 @@ func Generate() (map[string]string, error) {
 		return nil, err
 	}
 	return map[string]string{
-		"POSTGRES_USER":         "flowsint",
-		"POSTGRES_DB":           "flowsint",
-		"POSTGRES_PASSWORD":     pgPass,
-		"NEO4J_USERNAME":        "neo4j",
-		"NEO4J_PASSWORD":        neoPass,
-		"AUTH_SECRET":           authSecret,
-		"MASTER_VAULT_KEY_V1":   "base64:" + base64.StdEncoding.EncodeToString(key),
+		"POSTGRES_USER":       "flowsint",
+		"POSTGRES_DB":         "flowsint",
+		"POSTGRES_PASSWORD":   pgPass,
+		"NEO4J_USERNAME":      "neo4j",
+		"NEO4J_PASSWORD":      neoPass,
+		"AUTH_SECRET":         authSecret,
+		"MASTER_VAULT_KEY_V1": "base64:" + base64.StdEncoding.EncodeToString(key),
 	}, nil
 }
 

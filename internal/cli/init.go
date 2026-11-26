@@ -97,7 +97,7 @@ var initCmd = &cobra.Command{
 		m := snap.Manifest{
 			Version: snap.Version, Kind: "init",
 			Created: time.Now().UTC().Format(time.RFC3339),
-			Host: host, BootID: boot,
+			Host:    host, BootID: boot,
 			SHA256: map[string]string{"secrets.env": h},
 		}
 		mb, _ := json.MarshalIndent(m, "", "  ")

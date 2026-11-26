@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"flowsint-desk/internal/dock"
-	"flowsint-desk/internal/secrets"
 	"flowsint-desk/internal/run"
+	"flowsint-desk/internal/secrets"
 
 	"github.com/spf13/cobra"
 )

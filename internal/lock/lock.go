@@ -53,7 +53,7 @@ func Acquire(vault, host string, pid int, bootID string) error {
 	}
 	l := &Lock{
 		Host: host, PID: pid, BootID: bootID,
-		Started: time.Now().UTC().Format(time.RFC3339),
+		Started:   time.Now().UTC().Format(time.RFC3339),
 		Heartbeat: time.Now().UTC().Format(time.RFC3339),
 	}
 	b, _ := json.MarshalIndent(l, "", "  ")

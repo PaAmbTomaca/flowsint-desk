@@ -54,4 +54,6 @@ var unlockCmd = &cobra.Command{
 	},
 }
 
-func init() { unlockCmd.Flags().BoolVar(&unlockForce, "force", false, "forzar aunque el latido no esté caducado") }
+func init() {
+	unlockCmd.Flags().BoolVar(&unlockForce, "force", false, "forzar aunque el latido no esté caducado")
+}

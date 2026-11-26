@@ -69,18 +69,18 @@ func Init(e Env) (string, error) {
 }
 
 type SnapSummary struct {
-	DataAdded            int64 `json:"data_added"`
-	TotalSizeProcessed   int64 `json:"total_size_processed"`
-	TotalFilesProcessed  int   `json:"total_files_processed"`
+	DataAdded           int64 `json:"data_added"`
+	TotalSizeProcessed  int64 `json:"total_size_processed"`
+	TotalFilesProcessed int   `json:"total_files_processed"`
 }
 
 type Snap struct {
-	ID       string      `json:"id"`
-	ShortID  string      `json:"short_id"`
-	Time     time.Time   `json:"time"`
-	Host     string      `json:"hostname"`
-	Tags     []string    `json:"tags"`
-	Summary  SnapSummary `json:"summary"`
+	ID      string      `json:"id"`
+	ShortID string      `json:"short_id"`
+	Time    time.Time   `json:"time"`
+	Host    string      `json:"hostname"`
+	Tags    []string    `json:"tags"`
+	Summary SnapSummary `json:"summary"`
 }
 
 // Snapshots lista todos los snapshots, ordenados por fecha.

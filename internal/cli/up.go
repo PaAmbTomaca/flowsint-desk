@@ -323,4 +323,6 @@ func shutdown(runDir string, env []string) {
 	fmt.Println("✔ compose abajo, Docker rootless parado, directorio de ejecución borrado (nada en claro en disco)")
 }
 
-func init() { upCmd.Flags().StringVar(&upSnapshot, "snapshot", "", "arrancar desde un snapshot antiguo (ID)") }
+func init() {
+	upCmd.Flags().StringVar(&upSnapshot, "snapshot", "", "arrancar desde un snapshot antiguo (ID)")
+}

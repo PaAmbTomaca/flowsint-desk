@@ -152,11 +152,11 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 
 		// --- mapeo de uids y user namespaces ---
 		{name: "/etc/subuid tiene entrada para " + username,
-			run:  func() (bool, string) { return fileHasLine("/etc/subuid", username+":") },
-			fix:  "sudo sh -c \"echo '" + username + ":100000:65536' >> /etc/subuid\""},
+			run: func() (bool, string) { return fileHasLine("/etc/subuid", username+":") },
+			fix: "sudo sh -c \"echo '" + username + ":100000:65536' >> /etc/subuid\""},
 		{name: "/etc/subgid tiene entrada para " + username,
-			run:  func() (bool, string) { return fileHasLine("/etc/subgid", username+":") },
-			fix:  "sudo sh -c \"echo '" + username + ":100000:65536' >> /etc/subgid\""},
+			run: func() (bool, string) { return fileHasLine("/etc/subgid", username+":") },
+			fix: "sudo sh -c \"echo '" + username + ":100000:65536' >> /etc/subgid\""},
 		{name: "user namespaces habilitados (user.max_user_namespaces > 0)",
 			run: func() (bool, string) {
 				b, err := os.ReadFile("/proc/sys/user/max_user_namespaces")
@@ -303,8 +303,8 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 			run: func() (bool, string) { return passphrase.KeyringAvailable(), "" },
 			fix: "necesita sesión de escritorio con D-Bus: export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus y gnome-keyring/libsecret; si no, la frase simplement se pedirá cada vez (vale igual)"},
 		{name: "binario systemd-inhibit (snapshot final al apagar el equipo)", warn: true,
-			run:  look("systemd-inhibit"),
-			fix:  "instala systemd (ya viene en la mayoría de distribuciones); sin él, al apagar vale el último snapshot automático"},
+			run: look("systemd-inhibit"),
+			fix: "instala systemd (ya viene en la mayoría de distribuciones); sin él, al apagar vale el último snapshot automático"},
 		{name: "caché de imágenes escribible y $HOME con ≥ 6 GiB libres",
 			run: func() (bool, string) {
 				if _, err := os.Stat(cacheDir); err != nil {
