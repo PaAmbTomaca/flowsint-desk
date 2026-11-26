@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -61,10 +62,35 @@ func Load() (*Config, error) {
 		return c, nil
 	}
 	if _, err := toml.DecodeFile(p, c); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("leyendo %s: %w", p, err)
 	}
 	c.Path = p
+	if err := c.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", p, err)
+	}
 	return c, nil
+}
+
+// Validate rechaza valores con los que la sesión arrancaría para romperse
+// después (p. ej. save_interval_min = 0 hace saltar time.NewTicker con todo
+// ya levantado y los datos descifrados en RAM).
+func (c *Config) Validate() error {
+	if c.VaultPath == "" {
+		return fmt.Errorf("vault_path vacío")
+	}
+	if c.Port < 1024 || c.Port > 65535 {
+		return fmt.Errorf("port = %d no vale: usa un puerto entre 1024 y 65535 (sin sudo no se puede abrir uno menor)", c.Port)
+	}
+	if c.SaveIntervalMin < 1 {
+		return fmt.Errorf("save_interval_min = %d no vale: mínimo 1 minuto", c.SaveIntervalMin)
+	}
+	if c.KeepHourly < 0 || c.KeepDaily < 0 || c.KeepMonthly < 0 {
+		return fmt.Errorf("keep_hourly/keep_daily/keep_monthly no pueden ser negativos")
+	}
+	if c.KeepHourly+c.KeepDaily+c.KeepMonthly == 0 {
+		return fmt.Errorf("keep_hourly, keep_daily y keep_monthly a 0 borrarían TODOS los snapshots en el próximo forget")
+	}
+	return nil
 }
 
 func (c *Config) Save() error {
