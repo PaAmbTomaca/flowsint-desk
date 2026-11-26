@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	setupYes   bool
-	setupVault string
+	setupYes    bool
+	setupVault  string
+	setupEngine string
 )
 
 // interactive: hay alguien delante para contestar preguntas.
@@ -45,10 +46,11 @@ func paso(n int, titulo string) { fmt.Printf("\n── Paso %d · %s ──\n", 
 
 // setupCmd es el asistente: deja el equipo listo de principio a fin.
 var setupCmd = &cobra.Command{
-	Use:   "setup [--yes] [--vault RUTA]",
+	Use:   "setup [--yes] [--engine docker|podman] [--vault RUTA]",
 	Short: "Asistente: prepara este equipo de principio a fin (requisitos, almacén, imágenes y prueba)",
 	Long: `Guía paso a paso hasta dejar flowsint-desk funcionando en este equipo:
 
+  0. Motor: la primera vez eliges Docker rootless o Podman rootless.
   1. Requisitos: comprueba todo, instala lo que no necesita sudo (restic con su
      sha256, los binarios rootless con su firma) y, para lo que sí lo necesita,
      te da el comando exacto de TU distribución y espera a que lo ejecutes.
@@ -64,6 +66,25 @@ Se puede repetir las veces que haga falta: lo que ya está bien, se salta.
 La CLI nunca ejecuta sudo. Con --yes (o sin terminal) no pregunta: acepta los
 valores por defecto y se detiene en el primer paso que requiera tu intervención.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// ── 0. motor de contenedores (una vez por equipo) ──
+		cfg0, err := config.Load()
+		if err != nil {
+			return err
+		}
+		cfgExisted := fileExists(cfg0.Path)
+		motor, err := chooseEngine(cfg0, setupEngine, cfgExisted)
+		if err != nil {
+			return err
+		}
+		if !cfgExisted || cfg0.Engine != motor {
+			cfg0.Engine = motor
+			if err := cfg0.Save(); err != nil {
+				return err
+			}
+		}
+		dock.SetEngine(motor)
+		fmt.Printf("· motor de contenedores: %s (para cambiarlo más adelante: `flowsint-desk engine`)\n", motor)
+
 		// ── 1. requisitos ──
 		paso(1, "Requisitos del sistema")
 		pendientes, _ := runDoctor(true)
@@ -107,7 +128,7 @@ valores por defecto y se detiene en el primer paso que requiera tu intervención
 			return err
 		}
 		nuevoEquipo := true
-		if repoIn(cfg.VaultPath) && fileExists(cfg.Path) {
+		if cfgExisted && setupVault == "" && repoIn(cfg.VaultPath) {
 			fmt.Println("✔ este equipo ya está conectado al almacén:", cfg.VaultPath)
 			nuevoEquipo = false
 		} else {
@@ -203,5 +224,6 @@ func repoIn(vault string) bool {
 
 func init() {
 	setupCmd.Flags().BoolVar(&setupYes, "yes", false, "no preguntar: aceptar los valores por defecto")
+	setupCmd.Flags().StringVar(&setupEngine, "engine", "", "motor de contenedores: docker o podman (si no, se pregunta la primera vez)")
 	setupCmd.Flags().StringVar(&setupVault, "vault", "", "ruta del almacén (si no, se propone dentro del pCloud Drive detectado)")
 }
