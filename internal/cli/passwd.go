@@ -32,7 +32,7 @@ var passwdCmd = &cobra.Command{
 		}
 		defer limpiar()
 		fmt.Println("✔ frase actual correcta")
-		nueva, err := passphrase.PromptTwice(8)
+		nueva, err := passphrase.PromptTwice(passphrase.MinLen)
 		if err != nil {
 			return err
 		}
@@ -61,19 +61,31 @@ var passwdCmd = &cobra.Command{
 				fmt.Println("✔ clave antigua eliminada:", short(k.ID))
 			}
 		}
-		// actualizar copias locales de la frase
-		if err := os.WriteFile(filepath.Join(runDir, "passphrase"), []byte(nueva), 0o600); err != nil {
-			return err
+		// actualizar las copias locales de la frase QUE YA EXISTAN (no crear nuevas)
+		if pf := filepath.Join(runDir, "passphrase"); fileExists(pf) {
+			if err := os.WriteFile(pf, []byte(nueva), 0o600); err != nil {
+				return err
+			}
 		}
 		if err := os.WriteFile(se.PassFile, []byte(nueva), 0o600); err != nil {
 			return err
 		}
+		// llavero: o se actualiza o se borra; dejar la frase vieja haría que el
+		// siguiente `up` intente abrir el almacén con una frase que ya no vale
 		if _, err := passphrase.FromKeyring(); err == nil {
 			if save, _ := passphrase.AskSaveKeyring(); save {
-				_ = passphrase.SaveKeyring(nueva)
-				fmt.Println("✔ llavero actualizado")
+				if err := passphrase.SaveKeyring(nueva); err != nil {
+					fmt.Fprintln(os.Stderr, "aviso: no se pudo actualizar el llavero:", err)
+				} else {
+					fmt.Println("✔ llavero actualizado")
+				}
+			} else if err := passphrase.DeleteKeyring(); err != nil {
+				fmt.Fprintln(os.Stderr, "aviso: el llavero conserva la frase ANTIGUA y no se pudo borrar:", err)
+			} else {
+				fmt.Println("✔ frase antigua borrada del llavero (se pedirá por terminal)")
 			}
 		}
+		fmt.Println("· en tus otros equipos, la frase guardada en el llavero ya no vale: `up` te la pedirá por terminal")
 		// comprobar que la nueva frase abre el repo
 		se2 := store.Env{Repo: cfg.VaultPath, PassFile: newFile, CacheDir: filepath.Join(runDir, "restic-cache")}
 		if _, err := store.Exists(se2); err != nil {
@@ -82,4 +94,9 @@ var passwdCmd = &cobra.Command{
 		fmt.Println("✔ frase cambiada y verificada contra el repositorio")
 		return nil
 	},
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
