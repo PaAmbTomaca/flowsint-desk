@@ -21,18 +21,31 @@ const (
 
 var ErrNotInKeyring = errors.New("frase no guardada en el llavero")
 
+// EnvNoKeyring desactiva el llavero para este proceso (lo usa `selftest`,
+// que trabaja con un almacén desechable y no debe leer ni escribir la frase
+// real del usuario).
+const EnvNoKeyring = "FLOWSINT_DESK_NO_KEYRING"
+
+func keyringOff() bool { return os.Getenv(EnvNoKeyring) != "" }
+
 // stdinReader compartido para no perder datos bufferizados entre prompts.
 var stdinReader = bufio.NewReader(os.Stdin)
 
 // KeyringAvailable sondea el Secret Service: true si el servicio responde
 // (da igual que la clave de sonda no exista; eso significa que hay llavero).
 func KeyringAvailable() bool {
+	if keyringOff() {
+		return false
+	}
 	_, err := keyring.Get(service, "doctor-probe")
 	return errors.Is(err, keyring.ErrNotFound)
 }
 
 // FromKeyring devuelve la frase guardada en el llavero, o ErrNotInKeyring.
 func FromKeyring() (string, error) {
+	if keyringOff() {
+		return "", ErrNotInKeyring
+	}
 	p, err := keyring.Get(service, account)
 	if err != nil {
 		return "", ErrNotInKeyring
@@ -42,6 +55,9 @@ func FromKeyring() (string, error) {
 
 // SaveKeyring guarda la frase en el llavero.
 func SaveKeyring(p string) error {
+	if keyringOff() {
+		return errors.New("llavero desactivado para este proceso")
+	}
 	return keyring.Set(service, account, p)
 }
 
@@ -128,6 +144,9 @@ func Get() (string, bool, error) {
 
 // AskSaveKeyring pregunta si recordar la frase en el llavero.
 func AskSaveKeyring() (bool, error) {
+	if keyringOff() {
+		return false, nil
+	}
 	fmt.Fprintf(os.Stderr, "¿Guardar la frase en el llavero del sistema (Secret Service)? [s/N]: ")
 	ans := ReadLine()
 	return ans == "s" || ans == "S" || ans == "sí" || ans == "si" || ans == "y" || ans == "Y", nil
