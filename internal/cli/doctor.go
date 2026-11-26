@@ -201,6 +201,17 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 				return ok && maj >= 5, strings.TrimSpace(string(out))
 			},
 			fix: installHint(fam, "podman") + " (NO instales «podman-docker»: suplanta el comando docker y rompería tu Docker)"},
+		// no basta con que los binarios existan: que el user namespace se pueda
+		// crear de verdad (newuidmap con sus permisos, subuid válido)
+		{name: "Podman puede crear su user namespace (podman unshare)", only: dock.EnginePodman,
+			run: func() (bool, string) {
+				out, err := exec.Command("podman", "unshare", "true").CombinedOutput()
+				if err != nil {
+					return false, lastLine(string(out))
+				}
+				return true, ""
+			},
+			fix: "revisa que newuidmap/newgidmap tengan sus permisos (paquete " + pkgs["newuidmap"][fam] + ") y que /etc/subuid y /etc/subgid tengan una entrada válida para tu usuario; después: podman system migrate"},
 		{name: "binario pasta (red rootless de Podman)", only: dock.EnginePodman, run: look("pasta"), fix: installHint(fam, "pasta")},
 		{name: "aardvark-dns (los contenedores se encuentran por nombre)", only: dock.EnginePodman,
 			run: func() (bool, string) {

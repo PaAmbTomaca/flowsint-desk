@@ -195,7 +195,7 @@ func withDaemon(fn func(env []string) error) error {
 		return fmt.Errorf("quedan restos de una sesión anterior: ejecuta `flowsint-desk down` y repite")
 	}
 	env := dock.Env(runDir)
-	fmt.Println("· arrancando un Docker rootless temporal (tmpfs)...")
+	fmt.Printf("· preparando %s rootless temporal (tmpfs)...\n", dock.Engine())
 	if err := dock.StartDaemon(runDir); err != nil {
 		stopTempDaemon(runDir, env)
 		return err
