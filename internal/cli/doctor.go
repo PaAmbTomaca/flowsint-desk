@@ -346,9 +346,15 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 		{name: "llavero Secret Service disponible (frase opcional en llavero)", warn: true,
 			run: func() (bool, string) { return passphrase.KeyringAvailable(), "" },
 			fix: "necesita sesión de escritorio con D-Bus: export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus y gnome-keyring/libsecret; si no, la frase simplement se pedirá cada vez (vale igual)"},
-		{name: "binario systemd-inhibit (snapshot final al apagar el equipo)", warn: true,
-			run: look("systemd-inhibit"),
-			fix: "instala systemd (ya viene en la mayoría de distribuciones); sin él, al apagar vale el último snapshot automático"},
+		{name: fmt.Sprintf("logind espera ≥ %d s al apagar (snapshot final al apagar el equipo)", minShutdownWindow), warn: true,
+			run: func() (bool, string) {
+				w := inhibitDelaySeconds()
+				if w < 0 {
+					return false, "no se pudo consultar a logind (¿sin systemd?)"
+				}
+				return w >= minShutdownWindow, fmt.Sprintf("InhibitDelayMaxSec=%d", w)
+			},
+			fix: shutdownWindowAdvice()},
 		{name: "caché de imágenes escribible y $HOME con ≥ 6 GiB libres",
 			run: func() (bool, string) {
 				if _, err := os.Stat(cacheDir); err != nil {

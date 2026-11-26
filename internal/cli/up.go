@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -354,21 +353,29 @@ var upCmd = &cobra.Command{
 		lista.Store(true)
 		fmt.Printf("✔ Flowsint listo en http://127.0.0.1:%d  (Ctrl+C para guardar y cerrar)\n", cfg.Port)
 
-		// 11b. systemd-inhibit: retrasar el apagado para poder hacer el snapshot
-		//      final si no da tiempo; si no, vale el último snapshot automático.
-		var inhibit *exec.Cmd
-		if _, err := exec.LookPath("systemd-inhibit"); err == nil {
-			inhibit = exec.Command("systemd-inhibit",
-				"--what=shutdown", "--mode=delay",
-				"--who=flowsint-desk", "--why=sesión flowsint-desk activa (snapshot final al apagar)",
-				"sleep", "infinity")
-			if err := inhibit.Start(); err == nil {
-				fmt.Println("✔ systemd-inhibit activo (el apagado esperará al snapshot final)")
-				defer func() { _ = inhibit.Process.Kill() }()
-			} else {
-				fmt.Fprintln(os.Stderr, "aviso: no se pudo activar systemd-inhibit:", err)
+		// 11b. apagado del equipo: inhibidor "delay" de logind + aviso de que el
+		//      apagado empieza, para lanzar el snapshot final con pCloud aún vivo.
+		soltarApagado := func() {}
+		if rel, err := watchShutdown(func() {
+			fmt.Println("\n· el equipo se apaga: snapshot final ahora (logind espera)...")
+			select {
+			case loopSig <- syscall.SIGTERM:
+			default:
 			}
+		}); err == nil {
+			soltarApagado = rel
+			if w := inhibitDelaySeconds(); w >= 0 && w < minShutdownWindow {
+				fmt.Printf("✔ apagado vigilado, pero logind solo espera %d s: puede no dar tiempo al snapshot final (ver `flowsint-desk doctor`)\n", w)
+			} else {
+				fmt.Println("✔ apagado vigilado (el snapshot final se lanza al empezar a apagar)")
+			}
+		} else if rel, err2 := legacyInhibit(); err2 == nil {
+			soltarApagado = rel
+			fmt.Println("✔ systemd-inhibit activo (sin aviso previo de apagado: no hay D-Bus de sistema)")
+		} else {
+			fmt.Fprintln(os.Stderr, "aviso: no se pudo vigilar el apagado del equipo; al apagar valdrá el último snapshot automático:", err)
 		}
+		defer soltarApagado()
 		// 12. bucle de sesión: snapshot automático cada N min, SIGUSR1 = snapshot
 		//     inmediato, latido del bloqueo cada minuto, SIGINT/SIGTERM = snapshot
 		//     final y cierre ordenado.
@@ -435,6 +442,8 @@ var upCmd = &cobra.Command{
 					if time.Since(cierreFallido) > closeGrace {
 						cierreFallido = time.Now()
 						_ = os.WriteFile(finalFailedMarker(runDir), nil, 0o600)
+						// si esto era un apagado, no tiene sentido retenerlo más
+						soltarApagado()
 						avisar("final", err)
 						fmt.Fprintf(os.Stderr, "✖ NO se cierra: la sesión SIGUE ABIERTA en http://127.0.0.1:%d para no perder ese trabajo.\n"+
 							"  · Arregla la causa (¿pCloud montado y con sesión?, ¿espacio?, ¿bloqueo?) y repite Ctrl+C o `flowsint-desk down`.\n"+

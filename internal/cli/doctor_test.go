@@ -73,3 +73,12 @@ func TestDockerVersion(t *testing.T) {
 		t.Fatalf("sin versión → %q", got)
 	}
 }
+
+func TestParseInhibitDelay(t *testing.T) {
+	casos := map[string]int{"t 5000000\n": 5, "t 120000000": 120, "t 0": 0, "": -1, "s hola": -1, "t x": -1}
+	for in, want := range casos {
+		if got := parseInhibitDelay(in); got != want {
+			t.Errorf("parseInhibitDelay(%q) = %d, esperaba %d", in, got, want)
+		}
+	}
+}
