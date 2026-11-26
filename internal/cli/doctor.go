@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var doctorFix bool
+var doctorFix, doctorPackages bool
 
 // doctorCheck es una comprobación del entorno. Si falla y warn=true solo
 // avisa (no suma a los errores). fix es el paso exacto para arreglarlo a
@@ -53,6 +53,14 @@ lo instalable: descarga restic (verificando su sha256), los binarios rootless
 y crea la caché de imágenes y la configuración por defecto. Lo que requiera
 sudo (subuid/subgid, montar /tmp, sysctls) solo se imprime.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if doctorPackages {
+			c := allPackagesCmd(currentFamily())
+			if c == "" {
+				return fmt.Errorf("distribución no reconocida: instala con tu gestor de paquetes docker (con dockerd y compose v2), newuidmap/newgidmap, rootlesskit, slirp4netns, fuse-overlayfs y restic")
+			}
+			fmt.Println(c)
+			return nil
+		}
 		_, err := runDoctor(doctorFix)
 		return err
 	},
@@ -257,6 +265,20 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 				return false, "swap fuera de RAM: " + strings.Join(disco, ", ")
 			},
 			fix: "el kernel puede mandar páginas de /tmp (tmpfs) al swap: si ese swap está en disco SIN cifrar, los datos de la sesión pueden quedar en claro en el disco. Usa solo zram, cifra el swap (dm-crypt con clave aleatoria) o desactívalo mientras trabajas (sudo swapoff <dispositivo>). Lo mismo vale para hibernar (suspend-to-disk) con la sesión abierta: ciérrala antes"},
+		// SELinux en modo enforcing (Fedora/RHEL de fábrica) bloquea el acceso de
+		// los contenedores a ficheros del host montados sin etiquetar
+		{name: "SELinux no bloquea los montajes de los contenedores", warn: true,
+			run: func() (bool, string) {
+				b, err := os.ReadFile("/sys/fs/selinux/enforce")
+				if err != nil {
+					return true, "sin SELinux"
+				}
+				if strings.TrimSpace(string(b)) == "1" {
+					return false, "SELinux en modo enforcing"
+				}
+				return true, "SELinux permisivo"
+			},
+			fix: "flowsint-desk monta en los contenedores un socket y un directorio de la tmpfs sin etiqueta SELinux: con enforcing es probable que Flowsint no pueda usarlos (enrichers, import de Neo4j). NO está probado en Fedora: ejecuta `flowsint-desk selftest` y, si falla por permisos, mira `sudo ausearch -m avc -ts recent`"},
 		{name: "RAM libre ≥ 4 GB",
 			run: func() (bool, string) {
 				mem := readMemAvailable()
@@ -782,4 +804,5 @@ func autoConfigPerms() (string, error) {
 
 func init() {
 	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "arregla automáticamente lo que no requiera sudo")
+	doctorCmd.Flags().BoolVar(&doctorPackages, "packages", false, "imprime UNA línea que instala todos los paquetes del sistema necesarios en esta distribución")
 }

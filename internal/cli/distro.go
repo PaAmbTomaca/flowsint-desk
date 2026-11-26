@@ -10,12 +10,13 @@ import (
 const (
 	famArch   = "arch"
 	famDebian = "debian"
+	famFedora = "fedora"
 	famOther  = "otra"
 )
 
 // distroFamily clasifica la distribución a partir del contenido de
 // /etc/os-release (ID e ID_LIKE): CachyOS/Manjaro → arch; Debian/Ubuntu/Mint
-// → debian.
+// → debian; Fedora/RHEL y derivadas → fedora.
 func distroFamily(osRelease string) string {
 	var ids []string
 	for _, line := range strings.Split(osRelease, "\n") {
@@ -31,6 +32,8 @@ func distroFamily(osRelease string) string {
 			return famArch
 		case "debian", "ubuntu", "linuxmint", "raspbian":
 			return famDebian
+		case "fedora", "rhel", "centos", "rocky", "almalinux":
+			return famFedora
 		}
 	}
 	return famOther
@@ -46,13 +49,38 @@ func currentFamily() string {
 
 // pkgs: nombre del paquete que trae cada requisito, por familia.
 var pkgs = map[string]map[string]string{
-	"rootlesskit":    {famArch: "rootlesskit", famDebian: "rootlesskit"},
-	"slirp4netns":    {famArch: "slirp4netns", famDebian: "slirp4netns"},
-	"fuse-overlayfs": {famArch: "fuse-overlayfs", famDebian: "fuse-overlayfs"},
-	"newuidmap":      {famArch: "shadow", famDebian: "uidmap"},
-	"docker":         {famArch: "docker", famDebian: "docker.io"},
-	"compose":        {famArch: "docker-compose", famDebian: "docker-compose"},
-	"restic":         {famArch: "restic", famDebian: "restic"},
+	"rootlesskit":    {famArch: "rootlesskit", famDebian: "rootlesskit", famFedora: "rootlesskit"},
+	"slirp4netns":    {famArch: "slirp4netns", famDebian: "slirp4netns", famFedora: "slirp4netns"},
+	"fuse-overlayfs": {famArch: "fuse-overlayfs", famDebian: "fuse-overlayfs", famFedora: "fuse-overlayfs"},
+	"newuidmap":      {famArch: "shadow", famDebian: "uidmap", famFedora: "shadow-utils"},
+	"docker":         {famArch: "docker", famDebian: "docker.io", famFedora: "moby-engine"},
+	"compose":        {famArch: "docker-compose", famDebian: "docker-compose", famFedora: "docker-compose"},
+	"restic":         {famArch: "restic", famDebian: "restic", famFedora: "restic"},
+}
+
+// installVerb: orden del gestor de paquetes de cada familia.
+var installVerb = map[string]string{
+	famArch:   "sudo pacman -S",
+	famDebian: "sudo apt install",
+	famFedora: "sudo dnf install",
+}
+
+// allPackagesCmd devuelve UNA línea que instala todos los paquetes del sistema
+// que necesita flowsint-desk en esa familia ("" si no se conoce la familia).
+func allPackagesCmd(fam string) string {
+	verb := installVerb[fam]
+	if verb == "" {
+		return ""
+	}
+	seen := map[string]bool{}
+	var list []string
+	for _, req := range []string{"docker", "compose", "newuidmap", "rootlesskit", "slirp4netns", "fuse-overlayfs", "restic"} {
+		if p := pkgs[req][fam]; p != "" && !seen[p] {
+			seen[p] = true
+			list = append(list, p)
+		}
+	}
+	return verb + " " + strings.Join(list, " ")
 }
 
 // installHint devuelve el comando de instalación del paquete del sistema para
@@ -60,14 +88,10 @@ var pkgs = map[string]map[string]string{
 // ejecuta: solo lo muestra.
 func installHint(fam, req string) string {
 	p := pkgs[req][fam]
-	switch {
-	case p == "":
+	if p == "" || installVerb[fam] == "" {
 		return "instala «" + req + "» con el gestor de paquetes de tu distribución"
-	case fam == famArch:
-		return "sudo pacman -S " + p
-	default:
-		return "sudo apt install " + p
 	}
+	return installVerb[fam] + " " + p
 }
 
 // unescapeMount deshace los escapes octales de /proc/mounts (\040 = espacio).

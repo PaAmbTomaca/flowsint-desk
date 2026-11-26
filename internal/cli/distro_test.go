@@ -12,7 +12,9 @@ func TestDistroFamily(t *testing.T) {
 		"PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nID=debian\n": famDebian,
 		"ID=ubuntu\nID_LIKE=debian\n":                               famDebian,
 		"ID=pop\nID_LIKE=\"ubuntu debian\"\n":                       famDebian,
-		"ID=fedora\n":                                               famOther,
+		"ID=fedora\n":                                               famFedora,
+		"ID=rocky\nID_LIKE=\"rhel centos fedora\"\n":                famFedora,
+		"ID=opensuse-leap\n":                                        famOther,
 		"":                                                          famOther,
 	}
 	for in, want := range casos {
@@ -28,6 +30,15 @@ func TestInstallHint(t *testing.T) {
 	}
 	if got := installHint(famArch, "newuidmap"); got != "sudo pacman -S shadow" {
 		t.Errorf("arch newuidmap: %q", got)
+	}
+	if got := installHint(famFedora, "newuidmap"); got != "sudo dnf install shadow-utils" {
+		t.Errorf("fedora newuidmap: %q", got)
+	}
+	if got := allPackagesCmd(famDebian); got != "sudo apt install docker.io docker-compose uidmap rootlesskit slirp4netns fuse-overlayfs restic" {
+		t.Errorf("allPackagesCmd debian: %q", got)
+	}
+	if got := allPackagesCmd(famOther); got != "" {
+		t.Errorf("familia desconocida no debe inventar comando: %q", got)
 	}
 	if got := installHint(famOther, "restic"); got == "" || got[:4] == "sudo" {
 		t.Errorf("distro desconocida no debe inventar un comando: %q", got)
