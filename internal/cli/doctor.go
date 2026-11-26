@@ -149,18 +149,30 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 			return true, p
 		}
 	}
-	binFix := "`flowsint-desk doctor --fix` lo descarga a ~/.local/bin; a mano: ver la sección Instalación del README"
+	fam := currentFamily()
+	// Los binarios rootless solo se descargan solos en Arch (paquetes del
+	// mirror de Arch); en el resto se indica el paquete del sistema.
+	rootlessBin := func(bin string) *doctorCheck {
+		c := &doctorCheck{name: "binario " + bin, run: look(bin)}
+		if fam == famArch {
+			c.fix = "`flowsint-desk setup` lo descarga a ~/.local/bin (o: " + installHint(fam, bin) + ")"
+			c.auto = autoArchBin(bin)
+		} else {
+			c.fix = installHint(fam, bin)
+		}
+		return c
+	}
 
 	return []*doctorCheck{
 		// --- binarios rootless ---
-		{name: "binario rootlesskit", run: look("rootlesskit"), fix: binFix, auto: autoArchBin("rootlesskit")},
-		{name: "binario slirp4netns", run: look("slirp4netns"), fix: binFix, auto: autoArchBin("slirp4netns")},
-		{name: "binario fuse-overlayfs", run: look("fuse-overlayfs"), fix: binFix, auto: autoArchBin("fuse-overlayfs")},
-		{name: "binario dockerd-rootless.sh", run: look("dockerd-rootless.sh"), fix: binFix, auto: autoDockerdScript},
-		{name: "binario newuidmap (paquete shadow)", run: look("newuidmap"),
-			fix: "instala el paquete shadow del sistema (p. ej. sudo pacman -S shadow)"},
-		{name: "binario newgidmap (paquete shadow)", run: look("newgidmap"),
-			fix: "instala el paquete shadow del sistema (p. ej. sudo pacman -S shadow)"},
+		rootlessBin("rootlesskit"),
+		rootlessBin("slirp4netns"),
+		rootlessBin("fuse-overlayfs"),
+		{name: "binario dockerd-rootless.sh", run: look("dockerd-rootless.sh"),
+			fix:  "`flowsint-desk setup` lo descarga a ~/.local/bin (es un script de moby, vale para cualquier distribución)",
+			auto: autoDockerdScript},
+		{name: "binario newuidmap", run: look("newuidmap"), fix: installHint(fam, "newuidmap")},
+		{name: "binario newgidmap", run: look("newgidmap"), fix: installHint(fam, "newuidmap")},
 
 		// --- mapeo de uids y user namespaces ---
 		{name: "/etc/subuid tiene entrada para " + username,
@@ -201,10 +213,10 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 				maj, min, ok := parseVersion(strings.TrimPrefix(v[1], "v"))
 				return ok && (maj > 0 || min >= 17), strings.TrimSpace(string(out))
 			},
-			fix:  "`flowsint-desk doctor --fix` descarga el binario oficial a ~/.local/bin; a mano: github.com/restic/restic/releases",
+			fix:  "`flowsint-desk setup` descarga el binario oficial (sha256 verificado) a ~/.local/bin; o: " + installHint(fam, "restic"),
 			auto: autoRestic},
 		{name: "binario docker", run: look("docker"),
-			fix: "instala el paquete docker (solo se usa el cliente y compose; el daemon del sistema NO se toca)"},
+			fix: installHint(fam, "docker") + " (solo se usan el cliente, dockerd y compose; el daemon del sistema NO se toca)"},
 		{name: "docker compose v2",
 			run: func() (bool, string) {
 				out, err := exec.Command("docker", "compose", "version").CombinedOutput()
@@ -213,7 +225,7 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 				}
 				return true, strings.TrimSpace(string(out))
 			},
-			fix: "instala el plugin docker-compose-plugin (p. ej. sudo pacman -S docker-compose)"},
+			fix: installHint(fam, "compose") + " (o el plugin docker-compose-plugin del repositorio oficial de Docker)"},
 
 		// --- tmpfs, RAM, puerto ---
 		{name: "/tmp es tmpfs (statfs TMPFS_MAGIC 0x01021994)",
@@ -266,7 +278,13 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 				}
 				return unix.Access(vault, unix.W_OK) == nil, ""
 			},
-			fix: "monta pCloud (p. ej. ~/pCloudDrive) y ejecuta `flowsint-desk init --vault " + vault + "` para crearlo"},
+			fix: "abre pCloud Drive (debe estar montado y con sesión iniciada) y ejecuta `flowsint-desk setup` o `flowsint-desk init --vault " + vault + "`"},
+		{name: "pCloud Drive montado", warn: true,
+			run: func() (bool, string) {
+				m := detectPCloud()
+				return m != "", m
+			},
+			fix: "arranca el cliente de pCloud e inicia sesión: sin él montado no se puede leer ni guardar el almacén"},
 		{name: "almacén sobre el montaje FUSE de pCloud", warn: true,
 			run: func() (bool, string) {
 				typ, mnt := fuseMountOf(vault)
