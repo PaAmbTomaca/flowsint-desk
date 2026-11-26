@@ -34,7 +34,14 @@ func Default() *Config {
 	}
 }
 
+// EnvDir permite usar otro directorio de configuración (lo usa `selftest`
+// para no tocar la config real, y sirve para probar con un almacén aparte).
+const EnvDir = "FLOWSINT_DESK_CONFIG_DIR"
+
 func Dir() (string, error) {
+	if d := os.Getenv(EnvDir); d != "" {
+		return filepath.Abs(d)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
