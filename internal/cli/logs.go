@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"flowsint-desk/internal/dock"
@@ -20,18 +21,43 @@ var logsTail int
 func redactValues(runDir string) []string {
 	var vals []string
 	if sec, err := secrets.ReadEnv(filepath.Join(runDir, "secrets.env")); err == nil {
-		for _, v := range sec {
-			if len(v) >= 8 {
-				vals = append(vals, v)
+		for k, v := range sec {
+			// usuario y nombre de BD ("flowsint", "neo4j") no son secretos:
+			// enmascararlos convertía cada "flowsint" de los logs en ***
+			if !isSecretKey(k) || len(v) < 8 {
+				continue
+			}
+			vals = append(vals, v)
+			// la clave maestra va como "base64:<clave>": enmascarar también la
+			// clave suelta, que es como la manejaría (y podría loguear) la app
+			if raw, ok := strings.CutPrefix(v, "base64:"); ok && len(raw) >= 8 {
+				vals = append(vals, raw)
 			}
 		}
 	}
-	if b, err := os.ReadFile(filepath.Join(runDir, "passphrase")); err == nil {
-		if p := strings.TrimSpace(string(b)); len(p) >= 8 {
-			vals = append(vals, p)
+	// la frase puede estar en `passphrase` (la deja init) o solo en
+	// `restic-pass` (frase venida del llavero o del prompt)
+	for _, f := range []string{"passphrase", "restic-pass"} {
+		if b, err := os.ReadFile(filepath.Join(runDir, f)); err == nil {
+			if p := strings.TrimRight(string(b), "\r\n"); len(p) >= 8 {
+				vals = append(vals, p)
+			}
 		}
 	}
+	// los más largos primero: si un valor contiene a otro, no deja restos
+	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
 	return vals
+}
+
+// isSecretKey distingue los valores secretos de secrets.env de los que son
+// simple configuración (usuario, nombre de BD).
+func isSecretKey(k string) bool {
+	for _, s := range []string{"PASSWORD", "SECRET", "KEY"} {
+		if strings.Contains(k, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func redactText(s string, vals []string) string {
