@@ -1,5 +1,12 @@
 # Podman, segunda vuelta (2026-11-26)
 
+> **Corregido el mismo día** por `2026-11-26-podman-deep-research-2.md`, hecho con
+> búsqueda web: este análisis (solo sobre el código) acierta en qué se gana, pero
+> **se queda corto en coste y en un riesgo**: los healthchecks de Podman dependen
+> de `systemd --user` y pueden no funcionar con almacenamiento en ruta propia, y
+> Debian 13 (Podman 5.4) y Arch (6.x) son dos generaciones distintas. Coste
+> revisado: 5–7 días, u 8–11 si hay que orquestar sin compose.
+
 - **Pregunta**: tras la auditoría del 26/11, ¿sigue valiendo el "quedarse con
   Docker rootless, Podman es XL y no aporta" de P001 y del research del 18/11?
 - **Respuesta corta**: no del todo. En **seguridad** la conclusión anterior se

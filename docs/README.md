@@ -58,6 +58,7 @@ docs/
 
 | Fichero | Tema |
 |---|---|
+| 2026-11-26-podman-deep-research-2.md | **Deep research con fuentes**: qué ganamos/perdemos con Podman, complejidad (5–11 días), riesgos operativos y de seguridad, y los 8 experimentos que lo zanjan. Límite: fuentes leídas solo como fragmentos de búsqueda; nada medido |
 | 2026-11-26-podman-reanalisis.md | Podman, segunda vuelta tras la auditoría: gana en simplicidad/instalación/limpieza (no en seguridad), riesgos por medir (healthchecks sin systemd de usuario) y plan en fases de ~4–6 días como segundo backend |
 | 2026-11-podman-deep-research.md | Podman rootless 2026: arquitectura, compose vía socket, socket para enrichers, matriz S/M/L/XL por componente |
 
