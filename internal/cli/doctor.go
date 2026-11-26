@@ -228,6 +228,19 @@ func doctorChecks(cfg *config.Config, username string) []*doctorCheck {
 				return f >= 8<<30, fmt.Sprintf("%.1f GiB libres", float64(f)/(1<<30))
 			},
 			fix: "amplia la tmpfs de /tmp (size=... en /etc/fstab) o libera espacio: BDs e imágenes viven ahí mientras la app está abierta"},
+		{name: "swap solo en RAM (zram) — tmpfs no puede acabar en disco", warn: true,
+			run: func() (bool, string) {
+				b, err := os.ReadFile("/proc/swaps")
+				if err != nil {
+					return true, "no se pudo leer /proc/swaps"
+				}
+				disco := nonZramSwaps(string(b))
+				if len(disco) == 0 {
+					return true, "sin swap en disco"
+				}
+				return false, "swap fuera de RAM: " + strings.Join(disco, ", ")
+			},
+			fix: "el kernel puede mandar páginas de /tmp (tmpfs) al swap: si ese swap está en disco SIN cifrar, los datos de la sesión pueden quedar en claro en el disco. Usa solo zram, cifra el swap (dm-crypt con clave aleatoria) o desactívalo mientras trabajas (sudo swapoff <dispositivo>). Lo mismo vale para hibernar (suspend-to-disk) con la sesión abierta: ciérrala antes"},
 		{name: "RAM libre ≥ 4 GB",
 			run: func() (bool, string) {
 				mem := readMemAvailable()
@@ -360,6 +373,22 @@ func readMemAvailable() int64 {
 		}
 	}
 	return 0
+}
+
+// nonZramSwaps devuelve los dispositivos/ficheros de swap activos (contenido
+// de /proc/swaps) que NO son zram, es decir, que pueden acabar en disco.
+func nonZramSwaps(procSwaps string) []string {
+	var out []string
+	for i, line := range strings.Split(procSwaps, "\n") {
+		f := strings.Fields(line)
+		if i == 0 || len(f) == 0 { // cabecera o línea vacía
+			continue
+		}
+		if !strings.HasPrefix(f[0], "/dev/zram") {
+			out = append(out, f[0])
+		}
+	}
+	return out
 }
 
 func freeBytes(path string) int64 {
