@@ -34,6 +34,7 @@ jobs:
           path: |
             flowsint-desk
             ci/distro-check.sh
+            ci/e2e.sh
 
   # En cada distribución: `doctor --fix` sobre el sistema pelado, instalar la
   # línea de `doctor --packages` y exigir los requisitos en verde.
@@ -52,3 +53,20 @@ jobs:
           name: flowsint-desk
       - name: comprobar en ${{ matrix.image }}
         run: sh ci/distro-check.sh ./flowsint-desk
+
+  # Ciclo completo REAL (Flowsint, restic y contenedores de verdad) con cada
+  # motor: el asistente `setup` entero, incluida la prueba de humo.
+  e2e:
+    needs: go
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: ["docker", "podman"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flowsint-desk
+      - name: ciclo completo con ${{ matrix.engine }}
+        run: sh ci/e2e.sh ./flowsint-desk ${{ matrix.engine }}
