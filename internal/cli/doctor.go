@@ -5,6 +5,7 @@ import (
 	"compress/bzip2"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -557,22 +558,64 @@ func writeLocalBin(name string, data []byte) error {
 	return os.WriteFile(filepath.Join(d, name), data, 0o755)
 }
 
-// paquetes Arch del README (extra/os/x86_64) que contienen cada binario.
+// Paquetes de Arch (repo extra) que traen cada binario rootless. El nombre de
+// fichero actual se pregunta a archlinux.org; estos son la reserva.
 var archBinPkgs = map[string]string{
 	"rootlesskit":    "rootlesskit-3.3.0-1-x86_64.pkg.tar.zst",
 	"slirp4netns":    "slirp4netns-1.3.7-1-x86_64.pkg.tar.zst",
 	"fuse-overlayfs": "fuse-overlayfs-1.18-1-x86_64.pkg.tar.zst",
 }
 
+const (
+	archMirror  = "https://geo.mirror.pkgbuild.com/extra/os/x86_64/"
+	archKeyring = "/usr/share/pacman/keyrings/archlinux.gpg"
+)
+
+// archPkgFilename extrae el nombre de fichero del paquete de la respuesta
+// JSON de archlinux.org/packages/extra/x86_64/<nombre>/json/.
+func archPkgFilename(js []byte, name string) (string, error) {
+	var r struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.Unmarshal(js, &r); err != nil {
+		return "", err
+	}
+	// el nombre acaba en la URL de descarga: nada de rutas ni sorpresas
+	if !strings.HasPrefix(r.Filename, name+"-") || !strings.HasSuffix(r.Filename, ".pkg.tar.zst") || strings.ContainsAny(r.Filename, "/\\?#") {
+		return "", fmt.Errorf("nombre de paquete inesperado: %q", r.Filename)
+	}
+	return r.Filename, nil
+}
+
+// autoArchBin descarga el paquete oficial de Arch, VERIFICA SU FIRMA con el
+// llavero de paquetes del sistema (gpgv + archlinux-keyring) y solo entonces
+// extrae el binario a ~/.local/bin. Sin gpgv o sin llavero se niega: instalar
+// un binario sin verificar no compensa cuando `pacman -S` lo hace bien.
 func autoArchBin(bin string) func() (string, error) {
 	return func() (string, error) {
 		pkg, ok := archBinPkgs[bin]
 		if !ok {
 			return "", fmt.Errorf("no hay paquete automático para %s", bin)
 		}
-		data, err := httpGet("https://geo.mirror.pkgbuild.com/extra/os/x86_64/" + pkg)
+		if _, err := exec.LookPath("gpgv"); err != nil {
+			return "", fmt.Errorf("no hay gpgv para verificar la firma del paquete: instálalo con %s", installHint(famArch, bin))
+		}
+		if _, err := os.Stat(archKeyring); err != nil {
+			return "", fmt.Errorf("no está el llavero de paquetes (%s): instálalo con %s", archKeyring, installHint(famArch, bin))
+		}
+		// versión vigente (las antiguas desaparecen del mirror al actualizarse)
+		if js, err := httpGet("https://archlinux.org/packages/extra/x86_64/" + bin + "/json/"); err == nil {
+			if f, err := archPkgFilename(js, bin); err == nil {
+				pkg = f
+			}
+		}
+		data, err := httpGet(archMirror + pkg)
 		if err != nil {
 			return "", err
+		}
+		sig, err := httpGet(archMirror + pkg + ".sig")
+		if err != nil {
+			return "", fmt.Errorf("no se pudo bajar la firma del paquete: %w", err)
 		}
 		tmp, err := os.MkdirTemp("", "flowsint-fix-")
 		if err != nil {
@@ -583,27 +626,75 @@ func autoArchBin(bin string) func() (string, error) {
 		if err := os.WriteFile(pf, data, 0o600); err != nil {
 			return "", err
 		}
-		if out, err := exec.Command("tar", "--zstd", "-xf", pf, "-C", tmp).CombinedOutput(); err != nil {
+		if err := os.WriteFile(pf+".sig", sig, 0o600); err != nil {
+			return "", err
+		}
+		if out, err := exec.Command("gpgv", "--keyring", archKeyring, pf+".sig", pf).CombinedOutput(); err != nil {
+			return "", fmt.Errorf("la FIRMA del paquete %s no es válida: no se instala (%s)", pkg, lastLine(string(out)))
+		}
+		if out, err := exec.Command("tar", "--zstd", "-xf", pf, "-C", tmp, "usr/bin/"+bin).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("tar: %v (%s)", err, strings.TrimSpace(string(out)))
 		}
-		src := filepath.Join(tmp, "usr", "bin", bin)
-		b, err := os.ReadFile(src)
+		b, err := os.ReadFile(filepath.Join(tmp, "usr", "bin", bin))
 		if err != nil {
 			return "", fmt.Errorf("el paquete no trae usr/bin/%s", bin)
 		}
 		if err := writeLocalBin(bin, b); err != nil {
 			return "", err
 		}
-		return pkg, nil
+		return pkg + ", firma verificada con el llavero de Arch", nil
 	}
 }
 
+func lastLine(s string) string {
+	l := strings.Split(strings.TrimSpace(s), "\n")
+	return l[len(l)-1]
+}
+
+// dockerVersion extrae "29.0.1" de "Docker version 29.0.1, build abc".
+func dockerVersion(out string) string {
+	f := strings.Fields(out)
+	for i, w := range f {
+		if w == "version" && i+1 < len(f) {
+			v := strings.TrimRight(f[i+1], ",")
+			if _, _, ok := parseVersion(v); ok && !strings.ContainsAny(v, "/\\?#") {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// autoDockerdScript consigue dockerd-rootless.sh, por orden de confianza:
+// 1) el que ya trae el paquete de Docker del sistema; 2) el de moby en la
+// etiqueta de la MISMA versión que el Docker instalado; 3) la rama master
+// (avisando: es código sin fijar que se va a ejecutar).
 func autoDockerdScript() (string, error) {
-	data, err := httpGet("https://raw.githubusercontent.com/moby/moby/master/contrib/dockerd-rootless.sh")
+	for _, p := range []string{
+		"/usr/share/docker.io/contrib/dockerd-rootless.sh",
+		"/usr/share/docker/contrib/dockerd-rootless.sh",
+		"/usr/libexec/docker/dockerd-rootless.sh",
+	} {
+		if b, err := os.ReadFile(p); err == nil {
+			return "copiado de " + p + " (paquete del sistema)", writeLocalBin("dockerd-rootless.sh", b)
+		}
+	}
+	const base = "https://raw.githubusercontent.com/moby/moby/"
+	const file = "/contrib/dockerd-rootless.sh"
+	if out, err := exec.Command("docker", "--version").Output(); err == nil {
+		if v := dockerVersion(string(out)); v != "" {
+			for _, ref := range []string{"docker-v" + v, "v" + v} {
+				if data, err := httpGet(base + ref + file); err == nil {
+					return "moby " + ref + " (misma versión que tu Docker)", writeLocalBin("dockerd-rootless.sh", data)
+				}
+			}
+		}
+	}
+	data, err := httpGet(base + "master" + file)
 	if err != nil {
 		return "", err
 	}
-	return "dockerd-rootless.sh (moby master)", writeLocalBin("dockerd-rootless.sh", data)
+	return "moby master — AVISO: versión sin fijar; revisa ~/.local/bin/dockerd-rootless.sh o usa el del paquete de Docker de tu distribución", writeLocalBin("dockerd-rootless.sh", data)
 }
 
 func autoRestic() (string, error) {

@@ -47,3 +47,29 @@ func TestSumFor(t *testing.T) {
 		t.Fatal("hash truncado debe dar error")
 	}
 }
+
+func TestArchPkgFilename(t *testing.T) {
+	js := []byte(`{"pkgname":"rootlesskit","pkgver":"3.4.0","pkgrel":"1","filename":"rootlesskit-3.4.0-1-x86_64.pkg.tar.zst"}`)
+	if got, err := archPkgFilename(js, "rootlesskit"); err != nil || got != "rootlesskit-3.4.0-1-x86_64.pkg.tar.zst" {
+		t.Fatalf("archPkgFilename = %q, %v", got, err)
+	}
+	for _, malo := range []string{
+		`{"filename":"otro-1.0-1-x86_64.pkg.tar.zst"}`,
+		`{"filename":"rootlesskit-1/../../x.pkg.tar.zst"}`,
+		`{"filename":"rootlesskit-1.0.tar.gz"}`,
+		`no json`,
+	} {
+		if _, err := archPkgFilename([]byte(malo), "rootlesskit"); err == nil {
+			t.Errorf("debería rechazar %s", malo)
+		}
+	}
+}
+
+func TestDockerVersion(t *testing.T) {
+	if got := dockerVersion("Docker version 29.0.1, build abcdef\n"); got != "29.0.1" {
+		t.Fatalf("dockerVersion = %q", got)
+	}
+	if got := dockerVersion("algo raro"); got != "" {
+		t.Fatalf("sin versión → %q", got)
+	}
+}
