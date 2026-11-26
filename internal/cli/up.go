@@ -246,23 +246,23 @@ var upCmd = &cobra.Command{
 		//     inmediato, latido del bloqueo cada minuto, SIGINT/SIGTERM = snapshot
 		//     final y cierre ordenado.
 		digests, _ := dock.ImageDigests(env)
-		doSnapshot := func(kind string) {
+		ultimoBueno := time.Now() // el estado recién restaurado ES el último snapshot
+		doSnapshot := func(kind string) error {
 			if !lock.Mine(cfg.VaultPath, host, os.Getpid()) {
-				fmt.Println("⚠ ¡ATENCIÓN! el bloqueo ya no es nuestro (otro equipo lo cogió mientras pCloud sincronizaba): DEJO DE GUARDAR")
-				return
+				return fmt.Errorf("el bloqueo del almacén ya no es nuestro (otro equipo lo cogió mientras pCloud sincronizaba, o pCloud no deja leerlo): DEJO DE GUARDAR para no pisar sus datos")
 			}
 			m, err := snap.Build(env, runDir, filepath.Join(runDir, "staging"), digests, kind)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "aviso: snapshot falló:", redactText(err.Error(), redactVals))
-				return
+				return fmt.Errorf("preparando el volcado: %s", redactText(err.Error(), redactVals))
 			}
 			id, err := store.Backup(se, filepath.Join(runDir, "staging"), map[string]string{
 				"host": host, "boot": short(boot), "tipo": kind,
 			})
 			if err != nil {
-				fmt.Fprintln(os.Stderr, "aviso: restic backup falló:", redactText(err.Error(), redactVals))
-				return
+				return fmt.Errorf("%s", redactText(err.Error(), redactVals))
 			}
+			ultimoBueno = time.Now()
+			_ = os.Remove(finalFailedMarker(runDir))
 			fmt.Printf("✔ snapshot %s guardado (%s, %d nodos, %d rels, %d tablas pg)\n",
 				short(id), kind, m.Neo4jTotalN, m.Neo4jTotalR, len(m.PGRows))
 			// retención: como mucho una vez al día
@@ -275,6 +275,11 @@ var upCmd = &cobra.Command{
 					fmt.Println("· retención aplicada (forget+prune):", strings.TrimSpace(out))
 				}
 			}
+			return nil
+		}
+		avisar := func(kind string, err error) {
+			fmt.Fprintf(os.Stderr, "⚠ el snapshot (%s) FALLÓ: %v\n  Lo trabajado desde el último snapshot bueno (hace %s) NO está guardado todavía.\n",
+				kind, err, time.Since(ultimoBueno).Round(time.Second))
 		}
 		sigc := make(chan os.Signal, 4)
 		signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
@@ -282,20 +287,41 @@ var upCmd = &cobra.Command{
 		hbTick := time.NewTicker(1 * time.Minute)
 		defer saveTick.Stop()
 		defer hbTick.Stop()
+		var cierreFallido time.Time // último intento de cierre cuyo snapshot final falló
 		for {
 			select {
 			case sig := <-sigc:
 				if sig == syscall.SIGUSR1 {
 					fmt.Println("· snapshot solicitado (SIGUSR1)...")
-					doSnapshot("manual")
+					if err := doSnapshot("manual"); err != nil {
+						avisar("manual", err)
+					}
 					continue
 				}
 				fmt.Printf("\n· recibido %s: snapshot final y cierre...\n", sig)
-				doSnapshot("final")
+				if err := doSnapshot("final"); err != nil {
+					// Cerrar ahora borraría de la RAM lo único que queda del
+					// trabajo no guardado. Solo se cierra sin guardar si el
+					// usuario insiste dentro del plazo de gracia.
+					if time.Since(cierreFallido) > closeGrace {
+						cierreFallido = time.Now()
+						_ = os.WriteFile(finalFailedMarker(runDir), nil, 0o600)
+						avisar("final", err)
+						fmt.Fprintf(os.Stderr, "✖ NO se cierra: la sesión SIGUE ABIERTA en http://127.0.0.1:%d para no perder ese trabajo.\n"+
+							"  · Arregla la causa (¿pCloud montado y con sesión?, ¿espacio?, ¿bloqueo?) y repite Ctrl+C o `flowsint-desk down`.\n"+
+							"  · Para cerrar SIN guardar, repite Ctrl+C o `flowsint-desk down` antes de %s.\n",
+							cfg.Port, closeGrace)
+						continue
+					}
+					fmt.Fprintf(os.Stderr, "⚠ el snapshot final ha vuelto a fallar (%v): se cierra SIN guardar, como has pedido. Vale el último snapshot bueno (hace %s).\n",
+						err, time.Since(ultimoBueno).Round(time.Second))
+				}
 				shutdown(runDir, env)
 				return nil
 			case <-saveTick.C:
-				doSnapshot("auto")
+				if err := doSnapshot("auto"); err != nil {
+					avisar("auto", err)
+				}
 			case <-hbTick.C:
 				if err := lock.Touch(cfg.VaultPath, host, os.Getpid()); err != nil {
 					fmt.Println("⚠ latido del bloqueo falló:", err)
@@ -304,6 +330,14 @@ var upCmd = &cobra.Command{
 		}
 	},
 }
+
+// closeGrace es el plazo, tras un snapshot final fallido, en el que una
+// segunda orden de cierre se obedece aunque no se pueda guardar.
+const closeGrace = 2 * time.Minute
+
+// finalFailedMarker es el fichero (tmpfs) con el que `up` le dice a `down`
+// que el snapshot final falló y la sesión sigue abierta.
+func finalFailedMarker(runDir string) string { return filepath.Join(runDir, "final-failed") }
 
 // shutdown tira el compose, barre el data-root desde dentro del user-ns,
 // para el daemon rootless y borra el directorio de ejecución (tmpfs).
