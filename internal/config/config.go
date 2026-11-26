@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"flowsint-desk/internal/sockproxy"
+
 	"github.com/BurntSushi/toml"
 )
 
@@ -20,6 +22,10 @@ type Config struct {
 	KeepDaily       int    `toml:"keep_daily"`
 	KeepMonthly     int    `toml:"keep_monthly"`
 	LastForget      string `toml:"last_forget"` // RFC3339 de la última ejecución de forget
+	// DockerSocket: qué socket de Docker ven api/celery (para los enrichers):
+	// "filtrado" (proxy que solo deja lanzar contenedores sin montajes ni
+	// privilegios), "directo" (el socket rootless tal cual) o "no".
+	DockerSocket string `toml:"docker_socket"`
 }
 
 func Default() *Config {
@@ -31,6 +37,7 @@ func Default() *Config {
 		KeepHourly:      24,
 		KeepDaily:       30,
 		KeepMonthly:     12,
+		DockerSocket:    sockproxy.ModeFiltered,
 	}
 }
 
@@ -90,6 +97,9 @@ func (c *Config) Validate() error {
 	}
 	if c.SaveIntervalMin < 1 {
 		return fmt.Errorf("save_interval_min = %d no vale: mínimo 1 minuto", c.SaveIntervalMin)
+	}
+	if !sockproxy.ValidMode(c.DockerSocket) {
+		return fmt.Errorf("docker_socket = %q no vale: usa \"filtrado\", \"directo\" o \"no\"", c.DockerSocket)
 	}
 	if c.KeepHourly < 0 || c.KeepDaily < 0 || c.KeepMonthly < 0 {
 		return fmt.Errorf("keep_hourly/keep_daily/keep_monthly no pueden ser negativos")

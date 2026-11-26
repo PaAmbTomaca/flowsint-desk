@@ -85,7 +85,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
-      - ${DESK_RUN}/docker.sock:/var/run/docker.sock:ro
+      # DESK_SOCK: por defecto el proxy FILTRADO de flowsint-desk (solo deja lanzar
+      # enrichers sin montajes ni privilegios); el socket real solo con docker_socket = "directo"
+      - ${DESK_SOCK}:/var/run/docker.sock
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -118,7 +120,9 @@ services:
       - AUTH_SECRET=${AUTH_SECRET}
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
-      - ${DESK_RUN}/docker.sock:/var/run/docker.sock:ro
+      # DESK_SOCK: por defecto el proxy FILTRADO de flowsint-desk (solo deja lanzar
+      # enrichers sin montajes ni privilegios); el socket real solo con docker_socket = "directo"
+      - ${DESK_SOCK}:/var/run/docker.sock
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}

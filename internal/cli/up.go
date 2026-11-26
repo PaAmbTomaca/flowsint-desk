@@ -20,6 +20,7 @@ import (
 	"flowsint-desk/internal/secrets"
 	"flowsint-desk/internal/session"
 	"flowsint-desk/internal/snap"
+	"flowsint-desk/internal/sockproxy"
 	"flowsint-desk/internal/store"
 
 	"github.com/spf13/cobra"
@@ -234,12 +235,17 @@ var upCmd = &cobra.Command{
 		if err := os.WriteFile(filepath.Join(stackDir, "compose.yml"), assets.ComposeYML, 0o600); err != nil {
 			return err
 		}
+		// socket de Docker que verán api/celery: el real solo en modo "directo"
+		enrichersSock := run.Socket(runDir)
+		if cfg.DockerSocket != sockproxy.ModeDirect {
+			enrichersSock = filepath.Join(runDir, "enrichers.sock")
+		}
 		writeComposeEnv := func() error {
 			sec, err := secrets.ReadEnv(secFile)
 			if err != nil {
 				return err
 			}
-			ce := map[string]string{"DESK_RUN": runDir, "DESK_PORT": fmt.Sprint(cfg.Port)}
+			ce := map[string]string{"DESK_RUN": runDir, "DESK_PORT": fmt.Sprint(cfg.Port), "DESK_SOCK": enrichersSock}
 			for k, v := range sec {
 				ce[k] = v
 			}
@@ -256,6 +262,22 @@ var upCmd = &cobra.Command{
 			return err
 		}
 		fmt.Println("✔ Docker rootless vivo (data-root en tmpfs)")
+		switch cfg.DockerSocket {
+		case sockproxy.ModeDirect:
+			fmt.Println("⚠ docker_socket = \"directo\": Flowsint ve el socket de Docker sin filtrar (un fallo en Flowsint daría acceso a tus ficheros)")
+		default:
+			px, err := sockproxy.Start(enrichersSock, run.Socket(runDir), cfg.DockerSocket == sockproxy.ModeOff,
+				func(l string) { fmt.Fprintln(os.Stderr, "⚠", l) })
+			if err != nil {
+				return fmt.Errorf("arrancando el proxy filtrado del socket de Docker: %w", err)
+			}
+			defer px.Close()
+			if cfg.DockerSocket == sockproxy.ModeOff {
+				fmt.Println("✔ acceso de Flowsint a Docker desactivado (los enrichers que lanzan contenedores no funcionarán)")
+			} else {
+				fmt.Println("✔ socket de Docker filtrado para los enrichers (sin montajes, sin privilegios)")
+			}
+		}
 		for _, stale := range staleDirs {
 			if err := dock.WipeSubdirs(env, stale, "dockerd-data", "dockerd-exec", "rk-state", "neo4j-import"); err != nil {
 				fmt.Fprintln(os.Stderr, "aviso: no se pudo barrer el directorio viejo:", err)
