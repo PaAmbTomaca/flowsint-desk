@@ -1,6 +1,6 @@
 # P001 — Podman como backend opcional (daemonless) en vez de Docker rootless
 
-- **Estado**: **propuesta** (pendiente de decisión; objetivo v2, no bloqueante para v1)
+- **Estado**: **propuesta** — reanalizada el 2026-11-26 (`docs/research/2026-11-26-podman-reanalisis.md`): pasa a ser el siguiente paso tras validar las correcciones de la auditoría, como segundo backend seleccionable; coste revisado ~4–6 días (antes 10–15)
 - **Fecha**: 2026-11-17
 - **Contexto**: Surgió la duda de si Podman (rootless y daemonless) sería más
   seguro que el Docker rootless actual. Esta propuesta analiza la viabilidad

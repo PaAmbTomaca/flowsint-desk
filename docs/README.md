@@ -52,12 +52,13 @@ docs/
 
 | # | Tema | Estado |
 |---|------|--------|
-| P001 | Podman como backend opcional (daemonless) en vez de Docker rootless — deep research 2026-11 con escala de complejidad **XL (~10–15 días)** en `research/2026-11-podman-deep-research.md` | propuesta, objetivo v2 |
+| P001 | Podman como backend opcional (daemonless) en vez de Docker rootless — research del 18/11 (XL, ~10–15 días) y **reanálisis del 26/11** (~4–6 días, como segundo backend) en `research/` | propuesta: siguiente paso tras validar la auditoría |
 
 ### Research (`research/`)
 
 | Fichero | Tema |
 |---|---|
+| 2026-11-26-podman-reanalisis.md | Podman, segunda vuelta tras la auditoría: gana en simplicidad/instalación/limpieza (no en seguridad), riesgos por medir (healthchecks sin systemd de usuario) y plan en fases de ~4–6 días como segundo backend |
 | 2026-11-podman-deep-research.md | Podman rootless 2026: arquitectura, compose vía socket, socket para enrichers, matriz S/M/L/XL por componente |
 
 ### Seguridad (`security/`)
