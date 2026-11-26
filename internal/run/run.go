@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -55,13 +56,54 @@ func Ensure() (string, error) {
 	if !ok {
 		return "", fmt.Errorf("REFUSO escribir datos en claro: /tmp no es tmpfs (statfs)")
 	}
-	for _, sub := range []string{"", "rk-state", "dockerd-data", "dockerd-exec", "stack", "neo4j-import", "staging", "restore"} {
+	// /tmp es de todos y el nombre es predecible (el boot_id es público): no
+	// basta con MkdirAll. Se crea 0700 y se exige que sea un directorio real,
+	// nuestro y privado antes de escribir ni un secreto dentro.
+	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+		return "", err
+	}
+	if err := checkPrivate(dir); err != nil {
+		return "", err
+	}
+	if ok, err := IsTmpfs(dir); err != nil {
+		return "", err
+	} else if !ok {
+		return "", fmt.Errorf("REFUSO escribir datos en claro: %s no está en tmpfs (statfs)", dir)
+	}
+	for _, sub := range []string{"rk-state", "dockerd-data", "dockerd-exec", "stack", "neo4j-import", "staging", "restore"} {
 		p := filepath.Join(dir, sub)
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
+}
+
+// checkPrivate exige que dir sea un directorio de verdad (no un enlace
+// simbólico), propiedad del usuario efectivo y sin permisos para grupo/otros.
+// Defiende de que otro usuario local pre-cree /tmp/flowsint-desk-<boot_id>
+// (o un enlace a disco) para leer la frase, los secretos o los volcados.
+func checkPrivate(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		return fmt.Errorf("REFUSO usar %s: no es un directorio real (¿enlace simbólico?); bórralo y reintenta", dir)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("REFUSO usar %s: no se pudo comprobar su propietario", dir)
+	}
+	if int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("REFUSO usar %s: pertenece al uid %d, no a ti (uid %d); otro usuario lo ha creado antes", dir, st.Uid, os.Geteuid())
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf("REFUSO usar %s: permisos %04o y no se pudieron cerrar a 0700: %w", dir, fi.Mode().Perm(), err)
+		}
+	}
+	return nil
 }
 
 // Socket es el socket del Docker rootless de esta sesión.
