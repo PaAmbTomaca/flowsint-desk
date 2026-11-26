@@ -16,7 +16,19 @@ type Session struct {
 	Started string `json:"started"` // RFC3339
 	Host    string `json:"host"`
 	BootID  string `json:"boot_id"`
+	// Phase: PhaseStarting mientras `up` arranca (todavía no hay UI ni se
+	// pueden pedir snapshots), PhaseReady con todo levantado. Vacío = sesión
+	// escrita por una versión anterior, que solo existía ya lista.
+	Phase string `json:"fase,omitempty"`
 }
+
+const (
+	PhaseStarting = "arrancando"
+	PhaseReady    = "lista"
+)
+
+// Ready dice si la sesión ya terminó de arrancar.
+func (s *Session) Ready() bool { return s != nil && s.Phase != PhaseStarting }
 
 func file(runDir string) string { return filepath.Join(runDir, "session.json") }
 

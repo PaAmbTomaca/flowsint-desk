@@ -32,6 +32,9 @@ var backupCmd = &cobra.Command{
 		if err != nil || !sess.Alive() {
 			return fmt.Errorf("no hay ninguna sesión `up` viva")
 		}
+		if !sess.Ready() {
+			return fmt.Errorf("la sesión (pid %d) todavía está arrancando: aún no hay nada que guardar", sess.PID)
+		}
 		se, limpiar, err := openStore(cfg, runDir)
 		if err != nil {
 			return err

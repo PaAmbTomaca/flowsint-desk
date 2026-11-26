@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -40,8 +41,19 @@ var upCmd = &cobra.Command{
 			return err
 		}
 		if old, err := session.Read(runDir); err == nil && old.Alive() {
+			if !old.Ready() {
+				return fmt.Errorf("ya hay un `up` arrancando (pid %d); espera a que termine o usa `flowsint-desk down`", old.PID)
+			}
 			return fmt.Errorf("ya hay una sesión viva (pid %d, puerto %d); usa `flowsint-desk down`", old.PID, old.Port)
 		}
+		// Señales desde YA: sin esto, un Ctrl+C a mitad del arranque mataba el
+		// proceso dejando el daemon, los contenedores y los datos restaurados
+		// vivos en RAM, y un `backup` (SIGUSR1) lo mataba directamente.
+		sigc := make(chan os.Signal, 8)
+		signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
+		defer signal.Stop(sigc)
+		host, _ := os.Hostname()
+		boot, _ := run.BootID()
 		// 1b. limpieza de restos de un kill -9 / corte (ANTES de comprobar el puerto,
 		//     porque un daemon huérfano puede tener el puerto ocupado):
 		//     - todos los /tmp/flowsint-desk-*.stale: matar su daemon y sus contenedores
@@ -62,8 +74,19 @@ var upCmd = &cobra.Command{
 			dock.StopDaemon(dir)
 		}
 		if g, _ := filepath.Glob("/tmp/flowsint-desk-*.stale"); len(g) > 0 {
-			fmt.Println("· detectados restos (.stale) de sesiones anteriores: se limpian")
+			var propios []string
 			for _, s := range g {
+				// /tmp es de todos: solo se tocan restos que sean un directorio
+				// real y nuestro (un .stale ajeno traería su propio docker.sock
+				// y un dockerd.pid apuntando a cualquier proceso nuestro)
+				if run.Private(s) == nil {
+					propios = append(propios, s)
+				}
+			}
+			if len(propios) > 0 {
+				fmt.Println("· detectados restos (.stale) de sesiones anteriores: se limpian")
+			}
+			for _, s := range propios {
 				limpiarDir(s)
 				staleDirs = append(staleDirs, s)
 			}
@@ -73,14 +96,75 @@ var upCmd = &cobra.Command{
 		if statErr == nil || sessErr == nil {
 			fmt.Println("· detectados restos de una sesión anterior (kill -9 / corte): se limpian")
 			limpiarDir(runDir)
-			stale := runDir + ".stale"
-			_ = os.Rename(runDir, stale)
+			stale := staleName(runDir)
+			if err := os.Rename(runDir, stale); err != nil {
+				return fmt.Errorf("no se pudieron apartar los restos de la sesión anterior (%s): %w", runDir, err)
+			}
 			staleDirs = append(staleDirs, stale)
 			runDir, err = run.Ensure()
 			if err != nil {
 				return err
 			}
 		}
+		// 1c. registrar la sesión desde el principio (fase "arrancando"): un
+		//     segundo `up` se niega en vez de matar a este como si fuera un resto,
+		//     y `down` puede cancelar el arranque.
+		sess := &session.Session{PID: os.Getpid(), Port: cfg.Port, Started: time.Now().UTC().Format(time.RFC3339),
+			Host: host, BootID: boot, Phase: session.PhaseStarting}
+		if err := session.Write(runDir, sess); err != nil {
+			return err
+		}
+		var (
+			lista     atomic.Bool // arranque terminado: las señales van al bucle de sesión
+			armado    atomic.Bool // bloqueo tomado: desde aquí hay cosas que desmontar
+			abortando atomic.Bool // el manejador de señales está desmontando y va a salir
+		)
+		loopSig := make(chan os.Signal, 8)
+		go func() {
+			for sig := range sigc {
+				if lista.Load() {
+					select {
+					case loopSig <- sig:
+					default: // bucle ocupado y cola llena: la orden ya está encolada
+					}
+					continue
+				}
+				if sig == syscall.SIGUSR1 {
+					fmt.Println("· todavía arrancando: se ignora la petición de snapshot")
+					continue
+				}
+				if abortando.Swap(true) {
+					continue // ya se está desmontando
+				}
+				fmt.Printf("\n· recibido %s durante el arranque: se cancela y se limpia (no hay cambios que guardar)...\n", sig)
+				if armado.Load() {
+					teardown(runDir, dock.Env(runDir))
+					_ = lock.Release(cfg.VaultPath, host, os.Getpid())
+				} else {
+					session.Remove(runDir)
+					_ = os.Remove(filepath.Join(runDir, "restic-pass"))
+				}
+				os.Exit(130)
+			}
+		}()
+		// Si el arranque falla, no se deja nada a medias: ni daemon, ni
+		// contenedores, ni secretos/volcados restaurados en la tmpfs.
+		arrancado := false
+		defer func() {
+			if arrancado {
+				return
+			}
+			if abortando.Load() {
+				select {} // el manejador de señales termina la limpieza y sale
+			}
+			if armado.Load() {
+				fmt.Fprintln(os.Stderr, "· el arranque ha fallado: se desmonta todo para no dejar datos en claro en RAM")
+				teardown(runDir, dock.Env(runDir))
+			} else {
+				session.Remove(runDir)
+				_ = os.Remove(filepath.Join(runDir, "restic-pass"))
+			}
+		}()
 		// 2. puerto libre (tras limpiar restos)
 		if ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cfg.Port)); err != nil {
 			return fmt.Errorf("puerto 127.0.0.1:%d ocupado: %w (cambia port en la config)", cfg.Port, err)
@@ -94,11 +178,10 @@ var upCmd = &cobra.Command{
 		}
 		fmt.Println("✔ almacén desbloqueado:", cfg.VaultPath)
 		// 4. bloqueo entre equipos
-		host, _ := os.Hostname()
-		boot, _ := run.BootID()
 		if err := lock.Acquire(cfg.VaultPath, host, os.Getpid(), boot); err != nil {
 			return err
 		}
+		armado.Store(true)
 		fmt.Println("✔ sin bloqueo de otro equipo · bloqueo tomado por", host)
 		defer lock.Release(cfg.VaultPath, host, os.Getpid())
 		// 5. snapshot a restaurar: PRIMERO recuperar los secretos del snapshot
@@ -121,17 +204,19 @@ var upCmd = &cobra.Command{
 			if err := store.Restore(se, snapID, restoreDir); err != nil {
 				return err
 			}
-			if secPath, err := snap.FindFile(restoreDir, "secrets.env"); err == nil {
-				b, err := os.ReadFile(secPath)
-				if err != nil {
-					return err
-				}
-				if err := os.WriteFile(secFile, b, 0o600); err != nil {
-					return err
-				}
-				restored = short(snapID)
-				fmt.Printf("✔ secretos recuperados del snapshot %s\n", restored)
+			secPath, err := snap.FindFile(restoreDir, "secrets.env")
+			if err != nil {
+				return fmt.Errorf("el snapshot %s no trae secrets.env: no es un snapshot de flowsint-desk o está incompleto; prueba otro con `up --snapshot ID` (ver `flowsint-desk snapshots`)", short(snapID))
 			}
+			b, err := os.ReadFile(secPath)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(secFile, b, 0o600); err != nil {
+				return err
+			}
+			restored = short(snapID)
+			fmt.Printf("✔ secretos recuperados del snapshot %s\n", restored)
 		} else {
 			if _, err := os.Stat(secFile); os.IsNotExist(err) {
 				sec, err := secrets.Generate()
@@ -208,9 +293,8 @@ var upCmd = &cobra.Command{
 			fmt.Println("· no hay snapshots todavía: BD nueva")
 		} else {
 			if err := snap.RestoreInto(env, runDir, restoreDir); err != nil {
-				// NO arrancar la interfaz: bajar lo levantado y salir
-				_, _ = dock.Compose(env, runDir, "down", "--remove-orphans")
-				return fmt.Errorf("%w (he parado los servicios y NO he arrancado la interfaz)", err)
+				// NO arrancar la interfaz: al salir se desmonta todo (defer)
+				return fmt.Errorf("%s (NO se arranca la interfaz; prueba un snapshot anterior con `up --snapshot ID`)", redactText(err.Error(), redactVals))
 			}
 			fmt.Printf("✔ restaurado snapshot %s (manifest verificado)\n", restored)
 		}
@@ -221,10 +305,14 @@ var upCmd = &cobra.Command{
 			return fmt.Errorf("compose up (app): %v\n%s", err, redactText(out, redactVals))
 		}
 		// 11. sesión
-		sess := &session.Session{PID: os.Getpid(), Port: cfg.Port, Started: time.Now().UTC().Format(time.RFC3339), Host: host, BootID: boot}
+		sess.Phase = session.PhaseReady
 		if err := session.Write(runDir, sess); err != nil {
 			return err
 		}
+		// desde aquí las señales las atiende el bucle de sesión y un fallo ya
+		// no desmonta nada por su cuenta
+		arrancado = true
+		lista.Store(true)
 		fmt.Printf("✔ Flowsint listo en http://127.0.0.1:%d  (Ctrl+C para guardar y cerrar)\n", cfg.Port)
 
 		// 11b. systemd-inhibit: retrasar el apagado para poder hacer el snapshot
@@ -281,8 +369,6 @@ var upCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "⚠ el snapshot (%s) FALLÓ: %v\n  Lo trabajado desde el último snapshot bueno (hace %s) NO está guardado todavía.\n",
 				kind, err, time.Since(ultimoBueno).Round(time.Second))
 		}
-		sigc := make(chan os.Signal, 4)
-		signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 		saveTick := time.NewTicker(time.Duration(cfg.SaveIntervalMin) * time.Minute)
 		hbTick := time.NewTicker(1 * time.Minute)
 		defer saveTick.Stop()
@@ -290,7 +376,7 @@ var upCmd = &cobra.Command{
 		var cierreFallido time.Time // último intento de cierre cuyo snapshot final falló
 		for {
 			select {
-			case sig := <-sigc:
+			case sig := <-loopSig:
 				if sig == syscall.SIGUSR1 {
 					fmt.Println("· snapshot solicitado (SIGUSR1)...")
 					if err := doSnapshot("manual"); err != nil {
@@ -316,7 +402,7 @@ var upCmd = &cobra.Command{
 					fmt.Fprintf(os.Stderr, "⚠ el snapshot final ha vuelto a fallar (%v): se cierra SIN guardar, como has pedido. Vale el último snapshot bueno (hace %s).\n",
 						err, time.Since(ultimoBueno).Round(time.Second))
 				}
-				shutdown(runDir, env)
+				teardown(runDir, env)
 				return nil
 			case <-saveTick.C:
 				if err := doSnapshot("auto"); err != nil {
@@ -339,19 +425,41 @@ const closeGrace = 2 * time.Minute
 // que el snapshot final falló y la sesión sigue abierta.
 func finalFailedMarker(runDir string) string { return filepath.Join(runDir, "final-failed") }
 
-// shutdown tira el compose, barre el data-root desde dentro del user-ns,
-// para el daemon rootless y borra el directorio de ejecución (tmpfs).
-func shutdown(runDir string, env []string) {
-	if out, err := dock.Compose(env, runDir, "down", "--remove-orphans"); err != nil {
-		fmt.Fprintln(os.Stderr, "aviso: compose down:", err, strings.TrimSpace(out))
-	}
-	if err := dock.WipeSubdirs(env, runDir, "dockerd-data", "dockerd-exec", "rk-state", "neo4j-import"); err != nil {
-		fmt.Fprintln(os.Stderr, "aviso: wipe del data-root:", err)
+// staleName devuelve un nombre único para apartar un directorio de ejecución
+// muerto (casa con el glob /tmp/flowsint-desk-*.stale que barre `up`).
+func staleName(runDir string) string {
+	return fmt.Sprintf("%s.%d.stale", runDir, time.Now().UnixNano())
+}
+
+// teardown desmonta una sesión, esté como esté: tira el compose, barre el
+// data-root desde dentro del user-ns, para el daemon rootless, mata lo que
+// quede colgando de ese directorio y lo borra (tmpfs). Vale para el cierre
+// normal, para un arranque fallido o cancelado y para los restos de un kill -9.
+func teardown(runDir string, env []string) {
+	stack := filepath.Join(runDir, "stack", "compose.yml")
+	if dock.Alive(env) {
+		if fileExists(stack) && fileExists(filepath.Join(runDir, "compose.env")) {
+			if out, err := dock.Compose(env, runDir, "down", "--remove-orphans"); err != nil {
+				fmt.Fprintln(os.Stderr, "aviso: compose down:", err, strings.TrimSpace(redactText(out, redactValues(runDir))))
+			}
+		}
+		if err := dock.WipeSubdirs(env, runDir, "dockerd-data", "dockerd-exec", "rk-state", "neo4j-import"); err != nil {
+			fmt.Fprintln(os.Stderr, "aviso: wipe del data-root:", err)
+		}
 	}
 	dock.StopDaemon(runDir)
+	// por si el daemon no llegó a escribir su pidfile o dejó hijos vivos
+	dock.KillOrphanDaemons(runDir + "/")
 	session.Remove(runDir)
 	if err := run.Cleanup(runDir); err != nil {
-		fmt.Fprintln(os.Stderr, "aviso: no se pudo borrar el directorio de ejecución:", err)
+		// típico: ficheros de uids mapeados que solo se borran desde dentro
+		// de un daemon rootless. Se apartan para que el siguiente `up` los barra.
+		stale := staleName(runDir)
+		if os.Rename(runDir, stale) == nil {
+			fmt.Fprintf(os.Stderr, "aviso: no se pudo borrar todo el directorio de ejecución (%v).\n  Quedan restos en %s (tmpfs: RAM, no disco); el siguiente `flowsint-desk up` los elimina, y un reinicio también.\n", err, stale)
+		} else {
+			fmt.Fprintln(os.Stderr, "aviso: no se pudo borrar el directorio de ejecución:", err)
+		}
 		return
 	}
 	fmt.Println("✔ compose abajo, Docker rootless parado, directorio de ejecución borrado (nada en claro en disco)")

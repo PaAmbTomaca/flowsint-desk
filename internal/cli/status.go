@@ -26,7 +26,9 @@ var statusCmd = &cobra.Command{
 			return err
 		}
 		sess, err := session.Read(runDir)
-		if err == nil && sess.Alive() {
+		if err == nil && sess.Alive() && !sess.Ready() {
+			fmt.Printf("estado: ARRANCANDO (pid %d; todavía sin interfaz)\n", sess.PID)
+		} else if err == nil && sess.Alive() {
 			st, _ := time.Parse(time.RFC3339, sess.Started)
 			fmt.Printf("estado: CORRIENDO\n  pid: %d\n  host: %s (boot %s)\n  url: http://127.0.0.1:%d\n  arrancado: %s (hace %s)\n",
 				sess.PID, sess.Host, short(sess.BootID), sess.Port, sess.Started, time.Since(st).Round(time.Second))

@@ -79,6 +79,9 @@ func Ensure() (string, error) {
 	return dir, nil
 }
 
+// Private es checkPrivate para otros paquetes (restos .stale en /tmp).
+func Private(dir string) error { return checkPrivate(dir) }
+
 // checkPrivate exige que dir sea un directorio de verdad (no un enlace
 // simbólico), propiedad del usuario efectivo y sin permisos para grupo/otros.
 // Defiende de que otro usuario local pre-cree /tmp/flowsint-desk-<boot_id>
