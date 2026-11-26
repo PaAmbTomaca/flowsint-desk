@@ -17,19 +17,93 @@ import (
 	"time"
 
 	"flowsint-desk/internal/config"
+	"flowsint-desk/internal/dock"
 	"flowsint-desk/internal/passphrase"
 	"flowsint-desk/internal/run"
 	"flowsint-desk/internal/session"
+	"flowsint-desk/internal/sockproxy"
 
 	"github.com/spf13/cobra"
 )
+
+var selftestSkipEnrichers bool
+
+// pyEnricher hace, desde dentro del contenedor de la API y con la misma
+// librería que usa Flowsint, lo que hace un enricher: descargar la imagen de
+// una herramienta y ejecutarla.
+const pyEnricher = `
+import docker
+c = docker.from_env()
+c.images.pull("projectdiscovery/subfinder", "latest")
+out = c.containers.run("projectdiscovery/subfinder:latest", "-version", remove=True,
+                       stdout=True, stderr=True, network_mode="bridge", environment={"TERM": "dumb"})
+print("ENRICHER_OK", len(out))
+`
+
+// pyAbusos intenta lo que haría un Flowsint comprometido. Cada intento debe
+// ser rechazado POR EL PROXY (su mensaje lleva "flowsint-desk").
+const pyAbusos = `
+import docker
+c = docker.from_env()
+abusos = {
+    "montar /etc del host": dict(volumes={"/etc": {"bind": "/host", "mode": "ro"}}),
+    "publicar un puerto en toda la red": dict(ports={"80/tcp": ("0.0.0.0", 8099)}),
+    "contenedor privilegiado": dict(privileged=True),
+}
+bien = True
+for nombre, kw in abusos.items():
+    try:
+        c.containers.run("projectdiscovery/subfinder:latest", "-version", remove=True, **kw)
+        print("PERMITIDO:", nombre); bien = False
+    except Exception as e:
+        if "flowsint-desk" in str(e):
+            print("denegado:", nombre)
+        else:
+            print("FALLO DISTINTO:", nombre, str(e)[:160]); bien = False
+print("ABUSOS_OK" if bien else "ABUSOS_MAL")
+`
+
+// checkEnrichers ejecuta las dos pruebas dentro del contenedor de la API.
+func checkEnrichers(denv []string, filtrado bool) error {
+	py := func(script string) (string, error) {
+		out, err := dock.Run(denv, "docker", "exec", "flowsint-desk-api", "python", "-c", script)
+		if err != nil && strings.Contains(out, "executable file not found") {
+			out, err = dock.Run(denv, "docker", "exec", "flowsint-desk-api", "python3", "-c", script)
+		}
+		return out, err
+	}
+	out, err := py(pyEnricher)
+	if err != nil || !strings.Contains(out, "ENRICHER_OK") {
+		return fmt.Errorf("un enricher NO puede lanzar su contenedor a través del socket (subfinder, lo mismo que hace Flowsint). "+
+			"Si es por falta de red a Docker Hub, repite con --skip-enrichers. Salida:\n%s", lastLinesOf(out, 12))
+	}
+	if !filtrado {
+		return nil
+	}
+	out, err = py(pyAbusos)
+	if err != nil || !strings.Contains(out, "ABUSOS_OK") {
+		return fmt.Errorf("el socket filtrado NO ha denegado todo lo que debía:\n%s", lastLinesOf(out, 12))
+	}
+	return nil
+}
+
+func lastLinesOf(s string, n int) string {
+	l := strings.Split(strings.TrimSpace(s), "\n")
+	if len(l) > n {
+		l = l[len(l)-n:]
+	}
+	return strings.Join(l, "\n")
+}
 
 var selftestCmd = &cobra.Command{
 	Use:   "selftest",
 	Short: "Prueba de humo: un ciclo completo real (arrancar, guardar, cerrar, restaurar) con un almacén desechable",
 	Long: `Comprueba que TODO funciona en este equipo sin tocar tus datos, tu
 configuración ni tu llavero: crea un almacén desechable en la tmpfs con una
-frase aleatoria, arranca Flowsint, registra un usuario de prueba, guarda un
+frase aleatoria, arranca Flowsint, registra un usuario de prueba, comprueba que
+los contenedores no pueden volcar memoria a disco, lanza un enricher de verdad
+(subfinder) a través del socket y verifica que el socket filtrado deniega
+montar carpetas, publicar puertos y contenedores privilegiados, guarda un
 snapshot, cierra, vuelve a arrancar restaurando ese snapshot y comprueba que
 el usuario sigue pudiendo entrar (es decir: Postgres y los secretos han
 viajado bien por el snapshot cifrado). Al final lo borra todo.
@@ -158,6 +232,26 @@ func runSelftest() error {
 		return fmt.Errorf("entrando con el usuario de prueba: %w", err)
 	}
 	hito("la API responde: usuario de prueba creado y con acceso")
+	// comprobaciones de seguridad sobre los contenedores REALES de la sesión
+	denv := dock.Env(runDir)
+	if out, err := dock.Output(denv, "docker", "exec", "flowsint-desk-postgres", "sh", "-c", "ulimit -c"); err != nil || strings.TrimSpace(out) != "0" {
+		return fmt.Errorf("los contenedores pueden volcar memoria a disco (ulimit -c = %q, %v): un core llevaría datos en claro fuera de la tmpfs", strings.TrimSpace(out), err)
+	}
+	hito("los contenedores no pueden volcar memoria a disco (core = 0)")
+	switch {
+	case selftestSkipEnrichers:
+		fmt.Println("  · enrichers: omitido (--skip-enrichers)")
+	case tc.DockerSocket == sockproxy.ModeOff:
+		fmt.Println("  · enrichers: desactivados en la configuración (docker_socket = \"no\")")
+	default:
+		if err := checkEnrichers(denv, tc.DockerSocket == sockproxy.ModeFiltered); err != nil {
+			return err
+		}
+		hito("un enricher lanza su contenedor a través del socket (subfinder)")
+		if tc.DockerSocket == sockproxy.ModeFiltered {
+			hito("el socket filtrado deniega montar carpetas, publicar puertos y contenedores privilegiados")
+		}
+	}
 	if err := correr("", "backup"); err != nil {
 		return err
 	}
@@ -265,4 +359,8 @@ func apiLogin(api, email, pass string) error {
 		return fmt.Errorf("la respuesta no trae access_token")
 	}
 	return nil
+}
+
+func init() {
+	selftestCmd.Flags().BoolVar(&selftestSkipEnrichers, "skip-enrichers", false, "no probar los enrichers (necesitan descargar una imagen de Docker Hub)")
 }
