@@ -84,20 +84,8 @@ var snapshotsCmd = &cobra.Command{
 			s := snaps[i]
 			tags := strings.Join(s.Tags, ",")
 			desc := tags
-			// leer manifest.json del snapshot para los recuentos
-			paths, err := store.Ls(se, s.ID)
-			if err == nil {
-				for _, p := range paths {
-					if strings.HasSuffix(p, "/manifest.json") || p == "manifest.json" {
-						if out, err := store.Dump(se, s.ID, p); err == nil {
-							var m snap.Manifest
-							if json.Unmarshal([]byte(out), &m) == nil {
-								desc = fmt.Sprintf("tipo=%s nodos=%d rels=%d tablas_pg=%d", m.Kind, m.Neo4jTotalN, m.Neo4jTotalR, len(m.PGRows))
-							}
-						}
-						break
-					}
-				}
+			if m, ok := manifestOf(se, s); ok {
+				desc = fmt.Sprintf("tipo=%s nodos=%d rels=%d tablas_pg=%d", m.Kind, m.Neo4jTotalN, m.Neo4jTotalR, len(m.PGRows))
 			}
 			fmt.Printf("%-10s %-20s %-10s %-12s %s\n",
 				s.ShortID, s.Time.Local().Format("2006-01-02 15:04:05"), s.Host,
@@ -105,4 +93,29 @@ var snapshotsCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// manifestOf lee el manifest.json de un snapshot. El snapshot respalda UN
+// directorio (el staging), así que la ruta se deduce de sus `paths` y basta un
+// `restic dump`; solo si eso falla se lista el snapshot para buscarlo.
+func manifestOf(se store.Env, s store.Snap) (snap.Manifest, bool) {
+	var m snap.Manifest
+	for _, base := range s.Paths {
+		if out, err := store.Dump(se, s.ID, base+"/manifest.json"); err == nil && json.Unmarshal([]byte(out), &m) == nil {
+			return m, true
+		}
+	}
+	paths, err := store.Ls(se, s.ID)
+	if err != nil {
+		return m, false
+	}
+	for _, p := range paths {
+		if strings.HasSuffix(p, "/manifest.json") {
+			if out, err := store.Dump(se, s.ID, p); err == nil && json.Unmarshal([]byte(out), &m) == nil {
+				return m, true
+			}
+			break
+		}
+	}
+	return m, false
 }
