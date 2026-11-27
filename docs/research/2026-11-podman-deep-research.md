@@ -1,5 +1,7 @@
 # Deep research: Podman como backend de flowsint-desk (nov 2026)
 
+> **Nota (2026-11-26).** Investigación previa a la implementación. Podman es ya el segundo motor; lo que ocurrió al ejecutarlo de verdad está en `docs/decisions/0008-two-container-engines.md`. La estimación de 10–15 días de abajo no se cumplió: el ciclo de vida quedó encapsulado y la validación la hizo el CI.
+
 - **Fecha**: 2026-11-18
 - **Pregunta**: ¿qué costaría (en complejidad) sustituir Docker rootless por Podman
   rootless daemonless en flowsint-desk, y qué se ganaría realmente?

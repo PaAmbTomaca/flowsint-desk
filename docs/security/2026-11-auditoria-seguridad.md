@@ -7,6 +7,20 @@
   Cada hallazgo trae evidencia (fichero:línea o comando → salida).
 - **Severidad**: Crítica / Alta / Media / Baja / Info.
 
+> **Estado a 2026-11-26.** Este informe se conserva como se escribió; la columna
+> "Estado" de la tabla de abajo refleja el 20/11. Desde entonces:
+>
+> | # | Qué se hizo | Dónde |
+> |---|-------------|-------|
+> | A1 | Digest de cada imagen anotado y guardado en el manifest; aviso si los equipos difieren; `images sync` por digest; caché verificada por sha256; `flowsint_version` fijable. No se fijan digests en el código | ADR 0011 |
+> | A2 | **Resuelto**: proxy filtrado delante del socket, por lista de permitidos. Probado en real con ambos motores | ADR 0009 |
+> | M1 | `doctor` avisa de swap que no sea zram; documentados swap e hibernación | manual/07 |
+> | M2 | **Resuelto**: firma de los paquetes de Arch verificada; restic contra `SHA256SUMS`; `dockerd-rootless.sh` de la versión instalada | — |
+> | M3 | Aviso por debajo de 16 caracteres al crear la frase. El mínimo sigue en 8 | — |
+> | B1, B2 | Siguen aceptados. El bloqueo distingue ahora por identificador de máquina | ADR 0002 |
+>
+> Informe posterior: [`2026-11-26-auditoria-repo.md`](2026-11-26-auditoria-repo.md).
+
 ## Resumen ejecutivo
 
 | # | Severidad | Hallazgo | Estado |

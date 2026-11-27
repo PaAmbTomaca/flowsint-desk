@@ -1,5 +1,7 @@
 # Deep research: Podman rootless como backend — qué ganamos, qué perdemos, complejidad y riesgos (2026-11-26)
 
+> **Nota posterior.** Podman se implementó ese mismo día siguiendo la recomendación de esta investigación de orquestar directamente, sin compose ni healthchecks del motor. De los riesgos de abajo, los que se pudieron medir en el CI (Podman 5.7): el borrado necesita desmontar antes el overlay; el proceso pause queda vivo y es compartido por usuario; un `XDG_RUNTIME_DIR` propio rompe el DNS. Los enrichers a través del proxy funcionan. Podman 5.4 y 6.x siguen sin probar. Ver `docs/decisions/0008-two-container-engines.md`.
+
 - **Pregunta**: cambiar Docker rootless por Podman rootless (daemonless) en
   flowsint-desk: ganancias, pérdidas, complejidad y riesgos de seguridad y
   operativos, con el estado de Podman a finales de 2026.

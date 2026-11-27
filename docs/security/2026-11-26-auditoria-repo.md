@@ -8,12 +8,13 @@
   simulacro del flujo (`init/up/backup/down/kill -9/señales`) con dobles de
   `docker`, `restic` y `dockerd-rootless.sh`, como usuario sin privilegios y
   con `/tmp` en tmpfs.
-- **Límite, sin maquillar**: en el entorno de la auditoría **no había Docker
-  rootless ni restic reales, ni red para bajar las dependencias de Go**. El
-  código se ha compilado y probado contra dobles locales de las librerías
-  (cobra, toml, keyring, x/sys, x/term). Nada de esto sustituye a la batería
-  de aceptación de `ENCARGO.md` §7: **hay que repetirla en la máquina real
-  antes de fusionar**. Lo marcado ⚠ abajo es lo que más depende de ello.
+- **Cómo leer este documento**: está escrito por tandas, en el orden en que
+  ocurrió. La primera tanda se hizo **sin Docker ni restic reales** (solo
+  compilación contra dobles y un simulacro, que no está en el repositorio); por
+  eso sus filas llevan ⚠. Desde la tercera tanda el CI ejecuta el producto con
+  software auténtico, y buena parte de aquellos ⚠ quedó comprobada: ver
+  "Validado en real" y "Cuarta tanda". Lo que **hoy** sigue sin validar está en
+  "Sigue pendiente", al final.
 
 Complementa (no sustituye) a `2026-11-auditoria-seguridad.md` del 20/11: aquella
 miró la superficie de ataque; esta, sobre todo, si el producto cumple lo que
