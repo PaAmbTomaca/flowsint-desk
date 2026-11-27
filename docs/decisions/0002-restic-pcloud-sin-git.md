@@ -37,3 +37,19 @@
 ## Referencias
 
 - `ENCARGO.md` §2; `internal/store/`, `internal/snap/`.
+
+## Actualización 2026-11-26
+
+- La prohibición de git en el árbol se retiró el 2026-11-17 por orden del
+  operador: el repositorio se publica en GitHub. El resto de la decisión
+  (restic en pCloud; la base de datos nunca sobre una unidad sincronizada)
+  sigue vigente.
+- **Retención**: `forget` se ejecuta con `--group-by ""`. restic agrupa por
+  equipo y ruta, y la ruta respaldada lleva el `boot_id`: sin eso, cada arranque
+  del PC era un grupo con su propia cuota y casi no se borraba nada.
+- La salida `--json` de restic son líneas JSON y sus avisos van por stderr: se
+  leen por separado. Antes, un backup lento se daba por fallido.
+- El bloqueo entre equipos distingue por identificador de máquina, no solo por
+  nombre, y se escribe de forma atómica.
+- Segunda copia y comprobación periódica: [ADR 0012](0012-dos-copias-y-verificacion.md).
+- `init` sobre un almacén con snapshots conecta el equipo y no crea nada.

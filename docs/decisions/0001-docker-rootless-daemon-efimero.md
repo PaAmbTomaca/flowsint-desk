@@ -43,3 +43,18 @@
 
 - `ENCARGO.md` §2 (decisiones tomadas) y reglas duras; `AGENTS.md`.
 - `internal/dock/`.
+
+## Actualización 2026-11-26
+
+- Docker rootless ya no es el único motor: **Podman rootless** es el segundo,
+  elegible por equipo. Ver [ADR 0008](0008-two-container-engines.md). Docker
+  sigue siendo el valor por defecto y lo descrito aquí sigue vigente para él.
+- `StartDaemon` detecta que el daemon muere al arrancar y devuelve las últimas
+  líneas de su log (antes esperaba 90 s sin explicación).
+- El desmontaje (parar, borrar el data-root desde el user namespace, matar
+  restos, borrar el directorio) está unificado en `teardown()`.
+  Ver [ADR 0010](0010-no-cerrar-sin-guardar.md).
+- Los servicios arrancan con `cap_drop: ALL` más las capacidades mínimas,
+  `no-new-privileges` y `ulimits: core: 0`.
+- `dockerd-rootless.sh` se toma del paquete del sistema o de la etiqueta de
+  moby de la versión instalada; ya no de `master` salvo último recurso.

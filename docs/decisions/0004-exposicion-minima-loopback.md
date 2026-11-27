@@ -33,3 +33,14 @@
 ## Referencias
 
 - `ENCARGO.md` §2 y trampas; `assets/compose.yml`; `AGENTS.md`.
+
+## Actualización 2026-11-26
+
+- El socket del motor que se monta en `api` y `celery` ya no es el real sino un
+  proxy filtrado: [ADR 0009](0009-socket-filtrado-enrichers.md). Entre otras
+  cosas, impide que un contenedor lanzado por Flowsint publique un puerto fuera
+  de loopback o entre en la red de las bases de datos.
+- Un test exige que, en el compose, solo `app` publique puerto y solo en
+  `127.0.0.1`; y que la versión para Podman sea idéntica.
+- Límite documentado: `127.0.0.1:5273` es accesible para cualquier usuario o
+  programa local, y Flowsint permite registrarse.

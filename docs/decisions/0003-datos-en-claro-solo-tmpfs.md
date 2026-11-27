@@ -33,3 +33,27 @@
 ## Referencias
 
 - `ENCARGO.md` §5 requisitos de seguridad; `internal/run/`, `internal/cli/root.go`.
+
+## Actualización 2026-11-26
+
+La garantía se ha reforzado y se han documentado sus límites.
+
+- **El directorio de ejecución se valida**: debe ser un directorio real (no un
+  enlace), propiedad del usuario, sin permisos para otros, y estar él mismo en
+  tmpfs. `/tmp` es de todos y el nombre es predecible.
+- **Volcados de memoria**: además de la CLI, todos los contenedores llevan
+  `core=0`. `selftest` lo comprueba.
+- **Swap**: el sistema puede paginar tmpfs a swap. `doctor` avisa de cualquier
+  swap que no sea zram. La CLI no puede impedirlo.
+- **Hibernación**: escribe la RAM en disco. Documentado; no evitable desde aquí.
+- **Podman y el diario**: por defecto mandaría los logs de los contenedores a
+  journald (disco). Se fuerzan a fichero dentro de la tmpfs.
+- **Comandos de consulta**: usan un fichero de frase propio que se borra al
+  salir, y no dejan el directorio de ejecución creado.
+- **`init`** no deja la frase en la tmpfs si se guardó en el llavero.
+- **Apagado del equipo**: `up` escucha `PrepareForShutdown` de logind y lanza el
+  snapshot final al empezar el apagado. La ventana la fija `InhibitDelayMaxSec`
+  (5 s de fábrica, insuficiente): `doctor` lo comprueba y da los comandos.
+- **Si el snapshot final falla, no se borra nada**: [ADR 0010](0010-no-cerrar-sin-guardar.md).
+- Los avisos y logs enmascaran la frase venga de donde venga, y ya no tapan
+  valores que no son secretos (`flowsint`).

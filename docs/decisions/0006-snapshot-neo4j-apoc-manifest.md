@@ -43,3 +43,21 @@
 ## Referencias
 
 - `ENCARGO.md` §3 (hechos verificados) y §5; `internal/snap/`; `assets/migrations/`.
+
+## Actualización 2026-11-26
+
+El método no cambia. Se ha endurecido lo que lo rodea:
+
+- `pg_dump` se captura **solo por stdout**, en streaming. Antes, un aviso por
+  stderr acababa dentro de `postgres.sql` y el snapshot no restauraba (el sha256
+  cuadraba igual, porque se calculaba sobre el fichero ya contaminado).
+- Los recuentos de Postgres solo incluyen las tablas que existen: una migración
+  de Flowsint que quite una tabla ya no impide hacer snapshots.
+- Un recuento ilegible es un error, no un cero.
+- Al verificar, cada tabla del manifest debe existir con las mismas filas
+  (compatible con los manifests anteriores).
+- Un snapshot de datos debe traer sha256 de sus tres ficheros; si falta un
+  volcado no se "restaura" una base de datos vacía.
+- La verificación de ficheros (`LoadAndVerify`) se comparte con `verify`.
+- El manifest anota el digest de las imágenes: [ADR 0011](0011-imagenes-version-digest-cache.md).
+- Si la verificación falla, se desmonta todo; no solo se paran los servicios.

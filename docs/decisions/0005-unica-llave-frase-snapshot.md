@@ -34,3 +34,16 @@
 ## Referencias
 
 - `ENCARGO.md` §1 y §5; `internal/passphrase/`, `internal/secrets/`.
+
+## Actualización 2026-11-26
+
+- Si la frase guardada (fichero de `init` o llavero) no abre el almacén, se
+  pide por terminal en lugar de fallar. Cubre el llavero con la frase de otro
+  almacén y el desfasado tras un `passwd` en el otro equipo.
+- `passwd` actualiza o borra la entrada del llavero: nunca deja la antigua.
+- Al crear una frase se avisa por debajo de 16 caracteres (el mínimo sigue en 8).
+- Los comandos distintos de `up` no escriben en el fichero de frase de la
+  sesión viva.
+- `init` no deja la frase en la tmpfs si se guardó en el llavero.
+- La segunda copia (`mirror`) usa la misma frase en el momento de crearse, pero
+  es otro repositorio con sus propias claves.
