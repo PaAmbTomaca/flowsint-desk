@@ -269,15 +269,16 @@ flowsint_version = "latest"    # etiqueta de las imágenes de Flowsint; fíjala 
 
 ## Documentación
 
-🗺️ **Mapa visual de toda la arquitectura** (componentes, flujo de `up`, dónde vive
-cada dato, snapshots, seguridad, comandos): [`docs/mapa-arquitectura.html`](docs/mapa-arquitectura.html)
-(ábrelo en el navegador).
-
-Las decisiones de arquitectura viven en [`docs/`](docs/README.md), estilo ADR:
-`docs/decisions/` son las decisiones **ya vigentes** (Docker rootless efímero,
-restic en pCloud, datos solo en tmpfs, exposición solo en loopback, frase de
-paso única, método de snapshot Neo4j) y `docs/proposals/` las **propuestas
-pendientes** (p. ej. P001: Podman como backend opcional en v2).
+- 📘 **[Manual](docs/manual/README.md)**: instalación, uso diario, copias y
+  recuperación, referencia de comandos y de configuración, problemas
+  frecuentes, seguridad, arquitectura y desarrollo.
+- 🧭 **[Decisiones](docs/README.md#decisiones-decisions)** (ADR 0001–0013): por
+  qué cada cosa es como es.
+- 🗺️ **[Mapa visual](docs/mapa-arquitectura.html)** de la arquitectura (ábrelo
+  en el navegador).
+- 🛡 **[Auditorías](docs/security/)** y **[política de seguridad](SECURITY.md)**.
+- 📝 **[Cambios](CHANGELOG.md)** · **[Contribuir](CONTRIBUTING.md)** ·
+  **[Reglas para agentes](AGENTS.md)**.
 
 ## Desarrollo
 

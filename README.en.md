@@ -269,15 +269,18 @@ flowsint_version = "latest"    # Flowsint image tag; pin it (e.g. "1.2.10") so t
 
 ## Documentation
 
-🗺️ **Visual map of the whole architecture** (components, `up` lifecycle, where each
-piece of data lives, snapshots, security, commands): [`docs/mapa-arquitectura.html`](docs/mapa-arquitectura.html)
-(open it in a browser).
+Most documentation is in Spanish.
 
-Architecture decisions live in [`docs/`](docs/README.md), ADR style:
-`docs/decisions/` holds the **current** decisions (ephemeral rootless Docker,
-restic in pCloud, cleartext only in tmpfs, loopback-only exposure, single
-passphrase, Neo4j snapshot method) and `docs/proposals/` the **pending
-proposals** (e.g. P001: Podman as an optional backend in v2).
+- 📘 **[Manual](docs/manual/README.md)**: install, daily use, backups and
+  recovery, command and configuration reference, troubleshooting, security,
+  architecture and development.
+- 🧭 **[Decisions](docs/README.md#decisiones-decisions)** (ADR 0001–0013): why
+  things are the way they are. ADR 0008 (two container engines) is in English.
+- 🗺️ **[Visual map](docs/mapa-arquitectura.html)** of the architecture (open it
+  in a browser).
+- 🛡 **[Audits](docs/security/)** and **[security policy](SECURITY.md)**.
+- 📝 **[Changelog](CHANGELOG.md)** · **[Contributing](CONTRIBUTING.md)** ·
+  **[Rules for coding agents](AGENTS.md)**.
 
 ## Development
 

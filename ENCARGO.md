@@ -1,5 +1,15 @@
 # ENCARGO: flowsint-desk — Flowsint de escritorio, efímero y con copias cifradas en pCloud
 
+> **Documento histórico.** Es la especificación original con la que se construyó
+> la v0.1 por fases; se conserva tal cual porque explica el porqué de muchas
+> decisiones. **No describe el estado actual**: desde entonces han cambiado el
+> cierre (no se destruye si no se puede guardar), `init`, la retención, el
+> socket de los enrichers, y hay un segundo motor (Podman), un asistente y
+> pruebas reales en CI. Para usar la herramienta: [`docs/manual/`](docs/manual/).
+> Para lo vigente: [`docs/decisions/`](docs/decisions/) y [`CHANGELOG.md`](CHANGELOG.md).
+> Las "reglas duras" de abajo iban dirigidas al agente que lo implementó; las
+> que siguen en vigor están en [`AGENTS.md`](AGENTS.md).
+
 REGLAS DURAS (léelas antes que nada; cada una evita un desastre que ya ocurrió):
 - ~~GIT PROHIBIDO ENTERO~~ **RETIRADO POR ORDEN DEL OPERADOR DIRECTA (2026-11-17)**: el agente
   puede crear el repo remoto `github.com/PaAmbTomaca/flowsint-desk` y publicar el contenido
