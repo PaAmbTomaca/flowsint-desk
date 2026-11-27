@@ -58,7 +58,7 @@
   <h1>🗺️ flowsint-desk — mapa de arquitectura</h1>
   <p>Flowsint (OSINT de grafos) en el PC de escritorio, <b>efímero y cifrado</b>: los datos solo existen en claro en RAM (tmpfs)
   mientras la app está abierta; lo único persistente es un repo <b>restic cifrado en pCloud</b>, protegido por una sola frase de paso.
-  Sin sudo, sin tocar el Docker rootful del sistema, sin modificar Flowsint. <span class="small">Repo público: github.com/PaAmbTomaca/flowsint-desk · generado con Mistral Large 4</span></p>
+  Sin sudo, sin tocar el Docker rootful del sistema, sin modificar Flowsint. Motor a elegir: <b>Docker rootless</b> o <b>Podman rootless</b>. <span class="small">Repo público: github.com/PaAmbTomaca/flowsint-desk · generado con Mistral Large 4</span></p>
 </header>
 <nav>
   <a href="#vision">Visión</a><a href="#arq">Arquitectura</a><a href="#up">Ciclo de <code>up</code></a>
@@ -73,15 +73,17 @@
   <div class="grid">
     <div class="card ok"><h4>✔ Efímero</h4><p>Al cerrar la sesión (o al apagar el PC) la tmpfs desaparece: no queda nada en claro en el disco local.</p></div>
     <div class="card info"><h4>✔ Una sola llave</h4><p>La frase de paso abre el repo restic cifrado en pCloud: datos + secretos internos de Flowsint (<code>AUTH_SECRET</code>, <code>MASTER_VAULT_KEY_V1</code>, contraseñas de BD, vault de claves API).</p></div>
-    <div class="card info"><h4>✔ Sin sudo</h4><p>Docker rootless con daemon por sesión y data-root en tmpfs. La CLI se niega a arrancar como root (euid=0 → exit).</p></div>
-    <div class="card ok"><h4>✔ Sin tocar Flowsint</h4><p>Imágenes oficiales tal cual; todo se configura desde fuera con un compose embebido en el binario.</p></div>
+    <div class="card info"><h4>✔ Sin sudo</h4><p>Contenedores sin privilegios con todo el estado en tmpfs. Dos motores por equipo: Docker rootless (daemon por sesión) o Podman rootless (sin daemon). La CLI se niega a arrancar como root.</p></div>
+    <div class="card ok"><h4>✔ Sin tocar Flowsint</h4><p>Imágenes oficiales tal cual; todo se configura desde fuera (compose embebido con Docker; la CLI lanza los contenedores con Podman).</p></div>
     <div class="card warn"><h4>✔ Solo loopback</h4><p>Se publica únicamente <code>127.0.0.1:5273</code>. Ni API, ni Neo4j, ni Postgres, ni Redis salen de la máquina. Redis va sin persistencia.</p></div>
-    <div class="card vio"><h4>↔ Dos equipos</h4><p>El mismo vault en pCloud sirve a torre y portátil, con bloqueo por latido (best-effort, pCloud no es atómico).</p></div>
+    <div class="card vio"><h4>↔ Dos equipos</h4><p>El mismo vault en pCloud sirve a torre y portátil, con bloqueo por latido (best-effort, pCloud no es atómico). Segunda copia opcional en otro soporte (<code>mirror</code>).</p></div>
+    <div class="card bad"><h4>✔ No cierra sin guardar</h4><p>Si el snapshot final falla, la sesión sigue abierta. Cerrar perdiendo trabajo es siempre una decisión explícita.</p></div>
   </div>
 </section>
 
 <section id="arq">
   <h2>2 · Arquitectura (mapa de componentes)</h2>
+  <p class="small"><b>Actualizado 2026-11-26.</b> El diagrama muestra el motor Docker rootless. Con Podman no hay daemon: la CLI lanza los seis contenedores, y un <code>podman system service</code> hace solo de socket para los enrichers. En ambos casos lo que Flowsint ve como <code>/var/run/docker.sock</code> es el <b>proxy filtrado</b> de la CLI, no el socket real. Texto completo: <a href="manual/08-arquitectura.md">manual/08-arquitectura.md</a>.</p>
   <div class="legend">
     <span class="tag t-ram">RAM / tmpfs (se pierde al cerrar)</span>
     <span class="tag t-disk">disco local (solo config sin secretos + caché de imágenes públicas)</span>
@@ -173,19 +175,21 @@
 <section id="up">
   <h2>3 · Ciclo de vida de <code>flowsint-desk up</code> (paso a paso)</h2>
   <ol class="steps">
-    <li><b>Run dir en tmpfs</b> — crea <code>/tmp/flowsint-desk-&lt;boot_id&gt;/</code> y exige con <code>statfs</code> que sea tmpfs (<code>TMPFS_MAGIC</code>); si no, se niega.</li>
-    <li><b>Limpieza de restos</b> — mata daemons rootless huérfanos (escaneo de <code>/proc/*/cmdline</code> por <code>/tmp/flowsint-desk-</code>), barre dirs <code>.stale</code> y volúmenes viejos (p. ej. <code>auth.ini</code> de Neo4j con otra contraseña).</li>
-    <li><b>Puerto libre</b> — comprueba <code>127.0.0.1:5273</code> (configurable).</li>
-    <li><b>Desbloquea el almacén ANTES de tocar nada</b> — frase en orden: <code>runDir/passphrase</code> (tmpfs) → llavero → prompt sin eco (stdin en pruebas). Frase incorrecta → error y paro, sin tocar el bloqueo.</li>
-    <li><b>Bloqueo entre equipos</b> — <code>lock.json</code> en el vault: si otro host tiene latido &lt; 15 min, se niega; si está caducado, sugiere <code>unlock --force</code>.</li>
-    <li><b>Restaura el snapshot</b> — <code>restic restore</code> al staging tmpfs; recupera <b>secretos primero</b> (si no, Neo4j crea <code>auth.ini</code> con pass provisional y el healthcheck falla).</li>
-    <li><b>Compose embebido</b> — escribe <code>compose.yml</code> + <code>compose.env</code> (secrets) en el run dir.</li>
-    <li><b>Daemon rootless</b> — <code>rootlesskit</code> + <code>dockerd-rootless.sh</code> con data-root en tmpfs; carga imágenes desde la caché de disco (o pull).</li>
-    <li><b>BDs</b> — <code>compose up --wait postgres redis neo4j</code> → healthchecks OK.</li>
-    <li><b>Restore verificado</b> — <code>pg_dump</code> plano → postgres; APOC cypher → <code>cypher-shell -f</code> en Neo4j vacío + migraciones idempotentes; compara recuentos con <code>manifest.json</code> → si no cuadran, baja todo y NO arranca la UI.</li>
-    <li><b>App</b> — <code>compose up --wait api celery app</code> → session.json → imprime <code>http://127.0.0.1:5273</code>.</li>
-    <li><b>Bucle de sesión</b> — snapshot automático cada 10 min (configurable) · latido del lock cada 1 min · <code>SIGUSR1</code> = <code>backup</code> inmediato · <code>systemd-inhibit</code> retrasa el apagado para el snapshot final.</li>
-    <li><b>Cierre (Ctrl+C / SIGTERM / apagado)</b> — snapshot final → <code>compose down</code> → wipe del data-root desde un contenedor alpine dentro del user-ns → daemon parado → run dir borrado → lock liberado. Tras <code>kill -9</code>, el siguiente <code>up</code> detecta y limpia los restos del mismo boot_id.</li>
+    <li><b>Run dir en tmpfs</b> — crea <code>/tmp/flowsint-desk-&lt;boot_id&gt;/</code> y exige que sea un directorio real, propio, privado (0700) y en tmpfs (<code>statfs</code>); si no, se niega.</li>
+    <li><b>Señales desde el principio</b> — Ctrl+C durante el arranque cancela y desmonta; <code>session.json</code> se escribe en fase <code>arrancando</code>.</li>
+    <li><b>Limpieza de restos</b> — mata procesos huérfanos del motor, barre directorios <code>.stale</code> propios y volúmenes viejos.</li>
+    <li><b>Puerto libre</b> — <code>127.0.0.1:5273</code> (configurable).</li>
+    <li><b>Desbloquea el almacén ANTES de tocar nada</b> — frase: fichero de <code>init</code> → llavero → terminal. Si la guardada no abre, se pide por terminal. Incorrecta → paro sin tocar el bloqueo.</li>
+    <li><b>Bloqueo entre equipos</b> — por nombre e identificador de máquina. <b>Desde aquí, cualquier error desmonta todo.</b></li>
+    <li><b>Integridad</b> — cada <code>verify_every_days</code>, <code>restic check</code>.</li>
+    <li><b>Restaura el snapshot</b> a la tmpfs; <b>secretos primero</b>.</li>
+    <li><b>Motor</b> — Docker: <code>dockerd-rootless.sh</code> con data-root en tmpfs. Podman: almacén propio en tmpfs + socket de servicio. Arranca el <b>proxy filtrado</b>.</li>
+    <li><b>Imágenes</b> — de la caché, verificando su sha256, o descarga (anotando digest).</li>
+    <li><b>BDs</b> — postgres, redis, neo4j, y espera a que respondan.</li>
+    <li><b>Restore verificado</b> — carga volcados, reaplica índices de Neo4j, compara sha256 y recuentos con <code>manifest.json</code> → si no cuadran, desmonta y NO arranca la UI.</li>
+    <li><b>App</b> — api, celery, app → fase <code>lista</code> → <code>http://127.0.0.1:5273</code>.</li>
+    <li><b>Bucle de sesión</b> — snapshot cada 10 min · latido cada 1 min · <code>SIGUSR1</code> = <code>backup</code> · retención una vez al día · aviso de apagado de logind.</li>
+    <li><b>Cierre</b> — snapshot final. <b>Si falla, no se cierra</b> (repetir antes de 2 min cierra sin guardar). Si va bien: segunda copia (si está configurada y accesible) → <code>teardown</code> (parar contenedores, borrar el estado desde el user namespace, parar el motor, matar restos, borrar el run dir) → soltar el bloqueo.</li>
   </ol>
 </section>
 
@@ -212,7 +216,7 @@
     <div class="card"><h4><code>manifest.json</code></h4><p>Versión de la CLI, digests de imágenes, host, fecha, sha256 de cada fichero y recuentos de control (filas pg por tabla, nodos por etiqueta, relaciones). Tras restaurar se comparan: <b>si no coinciden, no se arranca la UI</b>.</p></div>
   </div>
   <h3>Retención (<code>forget</code>)</h3>
-  <p class="small">Por defecto 24 horas cubiertas, 30 días, 12 meses + prune (una vez al día como mucho, nunca en cada snapshot). Semántica restic: <code>--keep-hourly=N</code> = N horas cubiertas (1 snapshot/hora + el más antiguo del bucket).</p>
+  <p class="small">Por defecto 24 horas cubiertas, 30 días, 12 meses + prune (una vez al día como mucho), aplicado al conjunto completo de snapshots, no por equipo ni por arranque. Semántica restic: <code>--keep-hourly=N</code> = N horas cubiertas (1 snapshot/hora + el más antiguo del bucket).</p>
   <h3>Claves del repo</h3>
   <p class="small"><code>passwd</code> hace <code>restic key add</code> con la frase nueva y quita la antigua <b>autenticándose con la nueva</b> (restic se niega a quitar la clave de la sesión actual).</p>
 </section>
@@ -220,40 +224,48 @@
 <section id="seguridad">
   <h2>6 · Modelo de seguridad</h2>
   <div class="grid">
-    <div class="card bad"><h4>Nunca root</h4><p>La CLI hace <code>exit(1)</code> si <code>euid==0</code>. Prohibido <code>sudo flowsint-desk ...</code> y tocar el Docker rootful.</p></div>
-    <div class="card ok"><h4>Solo tmpfs para datos</h4><p>Antes de escribir cualquier dato en claro se comprueba con <code>statfs</code> que el path es tmpfs; si no, se niega.</p></div>
-    <div class="card ok"><h4>Sin secretos en argv ni logs</h4><p><code>umask 077</code>, <code>RLIMIT_CORE=0</code>. A restic la frase le llega por <code>RESTIC_PASSWORD_FILE</code> (fichero 0600 en tmpfs, borrado al final); en pruebas, por stdin.</p></div>
-    <div class="card ok"><h4>Logs y avisos saneados</h4><p>Toda salida externa (compose, restic, <code>docker logs</code>) pasa por <code>secrets.Redact</code>: valores de <code>secrets.env</code> y la frase se enmascaran como <code>***</code> antes de imprimirse. Verificado: 0 secretos en los logs mostrados.</p></div>
-    <div class="card ok"><h4>Exposición mínima</h4><p>Solo <code>127.0.0.1:5273</code>. Redis sin persistencia. El socket que ven api/celery es el del Docker rootless de la sesión.</p></div>
-    <div class="card warn"><h4>Recovery ante fallos</h4><p>Tras <code>kill -9</code> o corte de luz, el siguiente <code>up</code> detecta restos del mismo <code>boot_id</code>, mata huérfanos, barre y restaura el último snapshot. Al apagar, <code>systemd-inhibit --mode=delay</code> intenta el snapshot final.</p></div>
-    <div class="card warn"><h4>Verificación en cada restore</h4><p>sha256 + recuentos del <code>manifest.json</code>. Si no cuadran, no se arranca la interfaz.</p></div>
-    <div class="card vio"><h4>🛡 Auditoría severa</h4><p><a href="security/2026-11-auditoria-seguridad.md">docs/security/2026-11-auditoria-seguridad.md</a> — 2 hallazgos altos (imágenes sin pin de digest; socket rootless montado en api/celery), 3 medios, riesgos aceptados y 8 controles verificados en verde.</p></div>
+    <div class="card bad"><h4>Nunca root</h4><p>La CLI hace <code>exit(1)</code> si <code>euid==0</code>. Nunca ejecuta <code>sudo</code>.</p></div>
+    <div class="card ok"><h4>Solo tmpfs para datos</h4><p>El directorio de la sesión debe ser real, propio, privado y estar en tmpfs. Con Podman, los logs de contenedores se fuerzan a fichero (no al diario del sistema).</p></div>
+    <div class="card ok"><h4>Sin secretos en argv ni logs</h4><p><code>umask 077</code>, sin volcados de memoria (CLI y contenedores). La frase llega a restic por fichero 0600 en tmpfs. Los logs mostrados se enmascaran.</p></div>
+    <div class="card ok"><h4>Socket filtrado</h4><p>Flowsint no ve el socket real del motor: un proxy solo deja lanzar contenedores sin montajes, privilegios, puertos ni acceso a la red de las BD, y los crea sin capacidades. <a href="decisions/0009-socket-filtrado-enrichers.md">ADR 0009</a>.</p></div>
+    <div class="card ok"><h4>Exposición mínima</h4><p>Solo <code>127.0.0.1:5273</code>. Redis sin persistencia. Contenedores con las capacidades mínimas y <code>no-new-privileges</code>.</p></div>
+    <div class="card ok"><h4>Lo descargado se verifica</h4><p>restic contra <code>SHA256SUMS</code>; paquetes de Arch contra su firma; caché de imágenes por sha256; digest de imágenes anotado y comparado entre equipos.</p></div>
+    <div class="card warn"><h4>No cierra sin guardar</h4><p>Snapshot final fallido → la sesión sigue abierta. Arranque fallido o cancelado → se desmonta entero. <a href="decisions/0010-no-cerrar-sin-guardar.md">ADR 0010</a>.</p></div>
+    <div class="card warn"><h4>Verificación en cada restore</h4><p>sha256 + recuentos del manifest. Además <code>restic check</code> periódico y <code>verify</code> a demanda.</p></div>
+    <div class="card warn"><h4>Límites</h4><p>Swap en disco e hibernación pueden sacar la RAM a disco (<code>doctor</code> avisa del swap). Otros usuarios locales alcanzan el puerto 5273. <a href="manual/07-seguridad.md">manual/07-seguridad.md</a>.</p></div>
+    <div class="card vio"><h4>🛡 Auditorías</h4><p><a href="security/2026-11-auditoria-seguridad.md">20/11</a>: superficie de ataque (sus hallazgos altos están resueltos). <a href="security/2026-11-26-auditoria-repo.md">26/11</a>: 20 fallos corregidos y estado de validación.</p></div>
   </div>
 </section>
 
 <section id="bloqueo">
   <h2>7 · Bloqueo entre equipos (torre ↔ portátil)</h2>
-  <p><code>flowsint-desk.lock.json</code> en el vault: <code>{host, pid, boot_id, iniciado, latido}</code>. Al arrancar, si otro host tiene latido &lt; 15 min → se niega; si está caducado → sugiere <code>unlock --force</code> (pide escribir <code>SI</code>). Cada minuto se renueva el latido; antes de cada snapshot se relee el lock: si otro equipo lo cogió, se deja de guardar y avisa. <b>pCloud no es atómico</b>: es una protección para una persona con dos equipos, no para concurrencia real.</p>
+  <p><code>flowsint-desk.lock.json</code> en el vault: <code>{host, equipo, pid, boot_id, iniciado, latido}</code>. <code>equipo</code> es un hash del identificador de máquina: dos equipos con el mismo nombre no se pisan. Al arrancar, si otro equipo tiene latido &lt; 15 min → se niega; si está caducado → <code>unlock</code>. Cada minuto se renueva el latido; antes de cada snapshot se relee: si ya no es nuestro, no se guarda. Se escribe de forma atómica. <b>pCloud no es atómico</b>: es una protección para una persona con dos equipos, no para concurrencia real.</p>
 </section>
 
 <section id="comandos">
   <h2>8 · Comandos</h2>
   <table>
     <tr><th>Comando</th><th>Qué hace</th></tr>
-    <tr><td><code>doctor [--fix]</code></td><td>26 chequeos del entorno, cada uno con su “→ arreglar”. <code>--fix</code> instala sin sudo lo instalable (restic con sha256 verificado, rootlesskit/slirp4netns/fuse-overlayfs, dockerd-rootless.sh) y crea caché+config.</td></tr>
-    <tr><td><code>setup</code></td><td>= <code>doctor --fix</code> + lista solo los pendientes que requieren sudo (normalmente <code>/etc/subuid</code>, <code>/etc/subgid</code>). La CLI nunca ejecuta sudo.</td></tr>
-    <tr><td><code>init --vault RUTA</code></td><td>Crea el repo restic, genera los secretos y el primer snapshot (vacío). Pide la frase 2 veces (mín. 8) y si guardarla en el llavero.</td></tr>
-    <tr><td><code>up [--snapshot ID]</code></td><td>Desbloquea → lock → restaura → levanta Flowsint en <code>127.0.0.1:5273</code>. Queda en primer plano: auto-snapshot cada 10 min, latido cada 1 min; Ctrl+C = snapshot final + cierre ordenado.</td></tr>
-    <tr><td><code>down</code></td><td>Cierre ordenado de la sesión viva (snapshot final + limpieza total).</td></tr>
-    <tr><td><code>status</code></td><td>Corriendo o no, bloqueo (host/latido), último snapshot.</td></tr>
-    <tr><td><code>backup</code></td><td>Snapshot inmediato de la sesión en marcha (SIGUSR1).</td></tr>
-    <tr><td><code>snapshots</code></td><td>Lista: fecha, host, tamaño, recuentos del manifest.</td></tr>
-    <tr><td><code>unlock --force</code></td><td>Rompe un bloqueo caducado de otro equipo (confirmación con <code>SI</code>).</td></tr>
-    <tr><td><code>forget</code></td><td>Retención (24 h / 30 d / 12 m) + prune.</td></tr>
-    <tr><td><code>passwd</code></td><td>Cambia la frase de paso (<code>key add</code> con la nueva + quitar la antigua autenticándose con la nueva).</td></tr>
-    <tr><td><code>logs [--tail N] [filtro]</code></td><td>Logs de los contenedores de la sesión viva, <b>saneados</b> (secretos y frase → <code>***</code>). Si falla el arranque, <code>up</code> vuelca ya los logs de los contenedores implicados.</td></tr>
+    <tr><td><code>setup [--yes] [--engine …] [--vault …]</code></td><td>Asistente: motor → requisitos → almacén (primer o segundo equipo) → imágenes → prueba de humo → arranque.</td></tr>
+    <tr><td><code>doctor [--fix] [--packages]</code></td><td>Requisitos del motor elegido, cada uno con su “→ arreglar”. <code>--packages</code>: una línea con los paquetes de tu distribución.</td></tr>
+    <tr><td><code>init [--vault RUTA]</code></td><td>Almacén vacío: lo crea. Almacén con datos: conecta el equipo sin crear nada.</td></tr>
+    <tr><td><code>engine [docker|podman]</code></td><td>Muestra o cambia el motor (sesión cerrada; borra la caché de imágenes; repetir <code>setup</code>).</td></tr>
+    <tr><td><code>images [pull|update|sync]</code></td><td>Digest de cada imagen aquí y en el último snapshot; descargar, actualizar o igualar por digest.</td></tr>
+    <tr><td><code>selftest [--skip-enrichers]</code></td><td>Ciclo completo real con un almacén desechable + enricher real + abusos al socket.</td></tr>
+    <tr><td><code>up [--snapshot ID]</code></td><td>Abre la sesión y se queda en primer plano.</td></tr>
+    <tr><td><code>down</code></td><td>Cierre ordenado; si la sesión murió, limpia sus restos.</td></tr>
+    <tr><td><code>backup</code></td><td>Snapshot inmediato.</td></tr>
+    <tr><td><code>status</code></td><td>Sesión, bloqueo, integridad, segunda copia, último snapshot.</td></tr>
+    <tr><td><code>logs [--tail N] [filtro]</code></td><td>Logs de los contenedores, enmascarados.</td></tr>
+    <tr><td><code>snapshots</code></td><td>Lista con recuentos.</td></tr>
+    <tr><td><code>verify [ID]</code></td><td>Integridad del repositorio y de un snapshot, sin abrir sesión.</td></tr>
+    <tr><td><code>mirror [--to RUTA]</code></td><td>Segunda copia del almacén.</td></tr>
+    <tr><td><code>forget</code></td><td>Retención (24 h / 30 d / 12 m) sobre el conjunto completo + prune.</td></tr>
+    <tr><td><code>passwd</code></td><td>Cambia la frase de paso.</td></tr>
+    <tr><td><code>unlock [--force] [--restic]</code></td><td>Bloqueo caducado de otro equipo; o bloqueos huérfanos de restic.</td></tr>
+    <tr><td><code>version</code></td><td>Versión.</td></tr>
   </table>
-  <p class="small">Orden de resolución de la frase: <code>runDir/passphrase</code> (tmpfs) → llavero → prompt. Si el llavero tiene la frase de otro vault, repuebla <code>/tmp/flowsint-desk-&lt;boot_id&gt;/passphrase</code> (0600) antes de arrancar.</p>
+  <p class="small">Referencia completa: <a href="manual/04-comandos.md">manual/04-comandos.md</a>.</p>
 </section>
 
 <section id="repo">
@@ -261,51 +273,60 @@
   <pre><code>flowsint-desk/
 ├── main.go                     → internal/cli (cobra)
 ├── internal/
-│   ├── cli/        comandos: doctor, setup, init, up, down, status, backup, snapshots, unlock, forget, passwd
-│   ├── config/     ~/.config/flowsint-desk/config.toml (0600, sin secretos)
-│   ├── run/        run dir tmpfs + statfs TMPFS_MAGIC + boot_id
-│   ├── dock/       rootlesskit/dockerd rootless, imágenes, compose, wipe, huérfanos
-│   ├── store/      wrapper restic (frase siempre por RESTIC_PASSWORD_FILE)
-│   ├── snap/       build/restore de snapshots + manifest + verificación
-│   ├── secrets/    generación de AUTH_SECRET / MASTER_VAULT_KEY_V1 / passwords
-│   ├── session/    session.json (pid, puerto, host, boot)
-│   ├── lock/       bloqueo entre equipos (latido 15 min)
-│   └── passphrase/ frase de paso (llavero go-keyring o prompt sin eco)
-├── assets/         compose.yml embebido + migrations/*.cypher (Neo4j idempotentes)
-├── docs/           ADRs (decisions/), propuestas (proposals/), research/, este mapa
-├── dist/           (gitignored) binario compilado + vault-test
-├── flowsint/       (gitignored) referencia upstream de solo lectura
+│   ├── cli/        comandos y asistente
+│   ├── config/     config.toml (0600, sin secretos): carga y validación
+│   ├── run/        run dir en tmpfs y sus comprobaciones
+│   ├── dock/       motor (Docker/Podman), imágenes, caché, stack
+│   ├── sockproxy/  proxy filtrado del socket para los enrichers
+│   ├── store/      wrapper de restic
+│   ├── snap/       contenido del snapshot, manifest, verificación
+│   ├── secrets/    secretos de Flowsint y enmascarado
+│   ├── session/    session.json (fase arrancando/lista)
+│   ├── lock/       bloqueo entre equipos
+│   └── passphrase/ frase de paso (llavero o terminal)
+├── assets/         compose.yml embebido + migrations/*.cypher
+├── ci/             pruebas reales: distro-check.sh, e2e.sh
+├── .github/workflows/  ci.yml, release.yml
+├── docs/           manual/, decisions/, proposals/, research/, security/, este mapa
+├── AGENTS.md · CHANGELOG.md · CONTRIBUTING.md · SECURITY.md · ENCARGO.md (histórico)
 └── README.md / README.en.md</code></pre>
 </section>
 
 <section id="fases">
-  <h2>10 · Fases del proyecto y estado</h2>
+  <h2>10 · Historia y estado de validación</h2>
   <table>
-    <tr><th>Fase</th><th>Contenido</th><th>Estado</th></tr>
-    <tr><td>0</td><td>Comprobar supuestos (rootless, tmpfs, método de volcado Neo4j idéntico)</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
-    <tr><td>1</td><td>Arranque/parada: doctor, init, up, down + caché de imágenes</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
-    <tr><td>2</td><td>Snapshots restic, restauración verificada, snapshots, up --snapshot, forget</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
-    <tr><td>3</td><td>Bloqueo, llavero, señales, limpieza tras kill -9, systemd-inhibit</td><td><span class="tag t-ok">✔ hecha</span></td></tr>
-    <tr><td>4</td><td>Batería de aceptación (9 pruebas) sobre dist/vault-test + vault real + passwd/forget</td><td><span class="tag t-ok">✔ 9/9 + extra</span></td></tr>
+    <tr><th>Etapa</th><th>Contenido</th><th>Estado</th></tr>
+    <tr><td>Fases 0–4</td><td>Construcción según <code>ENCARGO.md</code> y batería de aceptación manual (9 pruebas) con Docker rootless</td><td><span class="tag t-ok">✔ v0.1.0</span></td></tr>
+    <tr><td>Auditoría 26/11</td><td>20 fallos corregidos (cierre que destruía sin guardar, <code>init</code> sobre almacén existente, retención, restic, bloqueo…)</td><td><span class="tag t-ok">✔</span></td></tr>
+    <tr><td>Seguridad</td><td>Socket filtrado, imágenes por digest, firmas, apagado, contenedores recortados</td><td><span class="tag t-ok">✔</span></td></tr>
+    <tr><td>Asistente</td><td><code>setup</code> completo, <code>selftest</code>, <code>verify</code>, <code>mirror</code>, <code>images</code></td><td><span class="tag t-ok">✔</span></td></tr>
+    <tr><td>Podman</td><td>Segundo motor, elegible por equipo</td><td><span class="tag t-ok">✔ probado con 5.7</span></td></tr>
   </table>
-  <h3>Pruebas de aceptación ejecutadas (salida cruda en los informes)</h3>
-  <p class="small">doctor verde · 0 secretos en ~/.config (control positivo) · up→siembra→backup→down→limpieza · re-up con grafo idéntico (salvo elementId) + login + clave API descifrada · 0 fugas en claro en vault/disco (control positivo) · bloqueo otro host (niega / caducado / unlock --force) · kill -9 → limpieza automática · frase incorrecta → error sin tocar lock · Docker rootful intacto · almacenamiento verificado en tmpfs (volúmenes, logs, redis sin persistencia).</p>
+  <h3>Qué está probado con software real (CI)</h3>
+  <p class="small">Ciclo completo (<code>setup</code> + <code>selftest</code>) con Docker rootless y Podman 5.7 · enricher real a través del proxy y tres abusos denegados · frase incorrecta · <code>kill -9</code> + <code>down</code> · <code>kill -9</code> + <code>up</code> · almacén inaccesible al cerrar · segunda copia · segundo equipo · nada en <code>/tmp</code> ni procesos vivos al final · requisitos en Arch, Debian 13 y Fedora.</p>
+  <h3>Qué no</h3>
+  <p class="small">Podman 5.4 (Debian 13) y 6.x (Arch, Fedora) · pCloud real · llavero · apagado del equipo · SELinux · flujo de publicación. Detalle: <a href="manual/09-desarrollo.md">manual/09-desarrollo.md</a>.</p>
 </section>
 
 <section id="adr">
-  <h2>11 · Decisiones (ADRs) y propuestas</h2>
+  <h2>11 · Decisiones (ADRs)</h2>
   <table>
-    <tr><th>Ref</th><th>Tema</th><th>Estado</th></tr>
-    <tr><td><a href="decisions/0001-docker-rootless-daemon-efimero.html">ADR-0001</a> (md)</td><td>Docker rootless con daemon efímero por sesión, data-root en tmpfs</td><td><span class="tag t-ok">vigente</span></td></tr>
-    <tr><td>ADR-0002</td><td>restic cifrado en pCloud; git prohibido para datos; BD nunca en unidad sincronizada</td><td><span class="tag t-ok">vigente</span></td></tr>
-    <tr><td>ADR-0003</td><td>Datos en claro solo en tmpfs; umask/RLIMIT_CORE; logs en tmpfs</td><td><span class="tag t-ok">vigente</span></td></tr>
-    <tr><td>ADR-0004</td><td>Solo 127.0.0.1:5273; Redis sin persistencia; socket rootless en api/celery</td><td><span class="tag t-ok">vigente</span></td></tr>
-    <tr><td>ADR-0005</td><td>Una sola llave (frase); secretos dentro del snapshot cifrado; llavero opcional</td><td><span class="tag t-ok">vigente</span></td></tr>
-    <tr><td>ADR-0006</td><td>Snapshot Neo4j = APOC cypher + migraciones re-aplicadas + verificación por manifest</td><td><span class="tag t-ok">vigente</span></td></tr>
-    <tr><td>ADR-0007</td><td>Nunca ejecutar la CLI como root (euid=0 → exit 1)</td><td><span class="tag t-ok">vigente</span></td></tr>
-    <tr><td><a href="proposals/P001-podman-backend-opcional.md">P001</a></td><td>Podman como backend opcional (daemonless) — deep research 2026-11: viable pero escala <b>XL (~10–15 días)</b>; bloque de riesgo = socket rootless-to-rootless para enrichers</td><td><span class="tag t-vio">propuesta v2</span></td></tr>
+    <tr><th>Ref</th><th>Tema</th></tr>
+    <tr><td><a href="decisions/0001-docker-rootless-daemon-efimero.md">0001</a></td><td>Docker rootless con daemon efímero por sesión, data-root en tmpfs</td></tr>
+    <tr><td><a href="decisions/0002-restic-pcloud-sin-git.md">0002</a></td><td>restic cifrado en pCloud; la BD nunca en una unidad sincronizada</td></tr>
+    <tr><td><a href="decisions/0003-datos-en-claro-solo-tmpfs.md">0003</a></td><td>Datos en claro solo en tmpfs; proceso endurecido</td></tr>
+    <tr><td><a href="decisions/0004-exposicion-minima-loopback.md">0004</a></td><td>Solo 127.0.0.1:5273; Redis sin persistencia</td></tr>
+    <tr><td><a href="decisions/0005-unica-llave-frase-snapshot.md">0005</a></td><td>Una sola llave; secretos dentro del snapshot</td></tr>
+    <tr><td><a href="decisions/0006-snapshot-neo4j-apoc-manifest.md">0006</a></td><td>Snapshot Neo4j con APOC + verificación por manifest</td></tr>
+    <tr><td><a href="decisions/0007-nunca-como-root.md">0007</a></td><td>Nunca como root</td></tr>
+    <tr><td><a href="decisions/0008-two-container-engines.md">0008</a></td><td>Dos motores: Docker y Podman (en inglés)</td></tr>
+    <tr><td><a href="decisions/0009-socket-filtrado-enrichers.md">0009</a></td><td>Proxy filtrado del socket para los enrichers</td></tr>
+    <tr><td><a href="decisions/0010-no-cerrar-sin-guardar.md">0010</a></td><td>Si no se puede guardar, no se cierra</td></tr>
+    <tr><td><a href="decisions/0011-imagenes-version-digest-cache.md">0011</a></td><td>Imágenes: versión, digest, caché verificada</td></tr>
+    <tr><td><a href="decisions/0012-dos-copias-y-verificacion.md">0012</a></td><td>Segunda copia y comprobación periódica</td></tr>
+    <tr><td><a href="decisions/0013-pruebas-reales-en-ci.md">0013</a></td><td>Pruebas con software real en el CI</td></tr>
   </table>
-  <p class="small">Fuera de alcance v1: GUI, 2FA/Authelia, WebDAV/rclone, parches al código de Flowsint. Limitación documentada: naabu no funciona en rootless (raw sockets), igual con Docker rootless que con Podman.</p>
+  <p class="small">Fuera de alcance: GUI, 2FA, parches al código de Flowsint. Limitación: naabu no hace escaneo SYN en contenedores sin privilegios, con ningún motor.</p>
 </section>
 
 </main>
